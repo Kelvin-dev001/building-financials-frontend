@@ -60,7 +60,7 @@ export default function Home() {
     check();
   }, [apiBase]);
 
-  // Session
+  // Session listener
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
     const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => setSession(sess));
@@ -80,11 +80,8 @@ export default function Home() {
       try {
         const res = await fetch(`${apiBase}/api/me`, { headers: authHeaders() });
         const json = await res.json();
-        if (res.ok) {
-          setMe(json);
-        } else {
-          setMe({ error: json.error });
-        }
+        if (res.ok) setMe(json);
+        else setMe({ error: json.error });
       } catch (err) {
         setMe({ error: err.message });
       }
@@ -213,165 +210,267 @@ export default function Home() {
   const role = me?.role;
 
   return (
-    <main style={{ padding: "2rem", maxWidth: 1100, margin: "0 auto", fontFamily: "Inter, sans-serif" }}>
-      <h1>Building Project Financial Management</h1>
-      <p>Backend status: {apiStatus}</p>
+    <div className="space-y-8">
+      {/* Header */}
+      <header className="section">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-sm uppercase tracking-[0.2em] text-ink/60">Building Project Financials</p>
+            <h1 className="text-3xl font-bold text-ink">Control Center</h1>
+            <p className="subtle">Kenyan project · Investors · Developers · Admin</p>
+          </div>
+          <div className="flex flex-col items-start gap-2 md:items-end">
+            <span className="badge">{apiStatus}</span>
+            {session ? (
+              <div className="text-right">
+                <p className="text-sm text-ink/80">{session.user.email}</p>
+                <button className="btn-ghost mt-2" onClick={handleLogout}>
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <form
+                onSubmit={handleLogin}
+                className="glass p-4 w-full max-w-sm flex flex-col gap-2 border border-white/50"
+              >
+                <h3 className="text-lg font-semibold text-ink">Sign In</h3>
+                <input
+                  className="input"
+                  type="email"
+                  placeholder="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+                <input
+                  className="input"
+                  type="password"
+                  placeholder="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+                <button className="btn-primary" type="submit">
+                  Sign In
+                </button>
+                {authError && <span className="text-sm text-red-600">{authError}</span>}
+                <p className="text-xs text-ink/60">
+                  Forgot password? <a className="text-ink underline" href="/auth/reset">Reset here</a>
+                </p>
+              </form>
+            )}
+          </div>
+        </div>
+      </header>
 
-      <section style={{ marginTop: "1.5rem" }}>
-        <h2>Auth</h2>
-        {session ? (
-          <>
-            <p>Signed in as: {session.user.email}</p>
-            <button onClick={handleLogout}>Logout</button>
-          </>
+      {/* Who am I */}
+      <section className="section">
+        <h2 className="heading">Session & Role</h2>
+        <p className="subtle mb-3">Your identity and assigned role.</p>
+        {me ? (
+          <pre className="bg-white/80 rounded-xl p-4 border border-white/60 text-sm overflow-x-auto">
+{JSON.stringify(me, null, 2)}
+          </pre>
         ) : (
-          <form onSubmit={handleLogin} style={{ display: "grid", gap: "0.5rem", maxWidth: 320 }}>
-            <input type="email" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-            <input
-              type="password"
-              placeholder="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-            <button type="submit">Sign In</button>
-            {authError && <span style={{ color: "red" }}>{authError}</span>}
-          </form>
+          <p className="subtle">Not loaded.</p>
         )}
-        <p style={{ marginTop: "0.5rem" }}>
-          Forgot password? <a href="/auth/reset">Reset here</a>
-        </p>
-      </section>
-
-      <section style={{ marginTop: "1.5rem" }}>
-        <h2>Who am I?</h2>
-        {me ? <pre>{JSON.stringify(me, null, 2)}</pre> : <p>Not loaded.</p>}
       </section>
 
       {/* Lists */}
-      {listError && <p style={{ color: "red" }}>{listError}</p>}
-
-      <section style={{ marginTop: "1.5rem" }}>
-        <h2>Contributions</h2>
-        <pre>{JSON.stringify(contribs, null, 2)}</pre>
+      <section className="grid gap-6 lg:grid-cols-3">
+        <div className="section">
+          <h3 className="heading">Contributions</h3>
+          {listError && <p className="text-red-600 text-sm mb-2">{listError}</p>}
+          <pre className="bg-white/80 rounded-xl p-3 border border-white/60 text-xs max-h-64 overflow-auto">
+{JSON.stringify(contribs, null, 2)}
+          </pre>
+        </div>
+        <div className="section">
+          <h3 className="heading">Receipts</h3>
+          <pre className="bg-white/80 rounded-xl p-3 border border-white/60 text-xs max-h-64 overflow-auto">
+{JSON.stringify(receipts, null, 2)}
+          </pre>
+        </div>
+        <div className="section">
+          <h3 className="heading">Expenses</h3>
+          <pre className="bg-white/80 rounded-xl p-3 border border-white/60 text-xs max-h-64 overflow-auto">
+{JSON.stringify(expenses, null, 2)}
+          </pre>
+        </div>
       </section>
 
-      <section style={{ marginTop: "1.5rem" }}>
-        <h2>Receipts</h2>
-        <pre>{JSON.stringify(receipts, null, 2)}</pre>
-      </section>
-
-      <section style={{ marginTop: "1.5rem" }}>
-        <h2>Expenses</h2>
-        <pre>{JSON.stringify(expenses, null, 2)}</pre>
-      </section>
-
-      {(role === "investor" || role === "admin") && (
-        <section style={{ marginTop: "1.5rem" }}>
-          <h2>Investor: Create Contribution (EUR)</h2>
-          <form onSubmit={submitContribution} style={{ display: "grid", gap: "0.5rem", maxWidth: 360 }}>
-            <input
-              type="number"
-              step="0.01"
-              placeholder="EUR amount"
-              value={contribAmount}
-              onChange={(e) => setContribAmount(e.target.value)}
-              required
-            />
-            <textarea
-              placeholder="note (optional)"
-              value={contribNote}
-              onChange={(e) => setContribNote(e.target.value)}
-            />
-            <button type="submit">Create Contribution</button>
-            {contribMsg && <span>{contribMsg}</span>}
-          </form>
-        </section>
-      )}
-
-      {(role === "developer" || role === "admin") && (
-        <>
-          <section style={{ marginTop: "1.5rem" }}>
-            <h2>Developer: Confirm Receipt (KES)</h2>
-            <form onSubmit={submitReceipt} style={{ display: "grid", gap: "0.5rem", maxWidth: 360 }}>
-              <input
-                type="text"
-                placeholder="contribution_id"
-                value={receiptContributionId}
-                onChange={(e) => setReceiptContributionId(e.target.value)}
-                required
-              />
-              <input
-                type="number"
-                step="0.01"
-                placeholder="KES received"
-                value={receiptKes}
-                onChange={(e) => setReceiptKes(e.target.value)}
-                required
-              />
-              <input
-                type="number"
-                step="0.000001"
-                placeholder="FX rate (optional)"
-                value={receiptFx}
-                onChange={(e) => setReceiptFx(e.target.value)}
-              />
-              <button type="submit">Log Receipt</button>
-              {receiptMsg && <span>{receiptMsg}</span>}
+      {/* Forms */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {(role === "investor" || role === "admin") && (
+          <section className="section">
+            <h3 className="heading">Investor: Create Contribution (EUR)</h3>
+            <p className="subtle mb-3">Record funds you sent. Status starts as pending.</p>
+            <form onSubmit={submitContribution} className="space-y-3">
+              <div>
+                <label className="label">EUR amount</label>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.01"
+                  placeholder="1000.00"
+                  value={contribAmount}
+                  onChange={(e) => setContribAmount(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="label">Note (optional)</label>
+                <textarea
+                  className="input h-24"
+                  placeholder="Description or reference"
+                  value={contribNote}
+                  onChange={(e) => setContribNote(e.target.value)}
+                />
+              </div>
+              <button className="btn-primary" type="submit">
+                Create Contribution
+              </button>
+              {contribMsg && <div className="text-sm text-ink">{contribMsg}</div>}
             </form>
           </section>
+        )}
 
-          <section style={{ marginTop: "1.5rem" }}>
-            <h2>Developer: Log Expense</h2>
-            <form onSubmit={submitExpense} style={{ display: "grid", gap: "0.5rem", maxWidth: 360 }}>
+        {(role === "developer" || role === "admin") && (
+          <section className="section">
+            <h3 className="heading">Developer: Confirm Receipt (KES)</h3>
+            <p className="subtle mb-3">Confirm the KES received against a contribution.</p>
+            <form onSubmit={submitReceipt} className="space-y-3">
+              <div>
+                <label className="label">Contribution ID</label>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="uuid"
+                  value={receiptContributionId}
+                  onChange={(e) => setReceiptContributionId(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="label">KES received</label>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.01"
+                  placeholder="100000"
+                  value={receiptKes}
+                  onChange={(e) => setReceiptKes(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="label">FX rate (optional)</label>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.000001"
+                  placeholder="160.123456"
+                  value={receiptFx}
+                  onChange={(e) => setReceiptFx(e.target.value)}
+                />
+              </div>
+              <button className="btn-primary" type="submit">
+                Log Receipt
+              </button>
+              {receiptMsg && <div className="text-sm text-ink">{receiptMsg}</div>}
+            </form>
+          </section>
+        )}
+      </div>
+
+      {(role === "developer" || role === "admin") && (
+        <section className="section">
+          <h3 className="heading">Developer: Log Expense</h3>
+          <p className="subtle mb-3">Record project spending in KES.</p>
+          <form onSubmit={submitExpense} className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="label">Amount (KES)</label>
               <input
+                className="input"
                 type="number"
                 step="0.01"
-                placeholder="Amount (KES)"
+                placeholder="5000"
                 value={expenseAmount}
                 onChange={(e) => setExpenseAmount(e.target.value)}
                 required
               />
-              <select value={expenseCategory} onChange={(e) => setExpenseCategory(e.target.value)}>
+            </div>
+            <div>
+              <label className="label">Category</label>
+              <select
+                className="input"
+                value={expenseCategory}
+                onChange={(e) => setExpenseCategory(e.target.value)}
+              >
                 <option value="materials">materials</option>
                 <option value="labour">labour</option>
                 <option value="other">other</option>
               </select>
-              <input type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} required />
-              <textarea
-                placeholder="Description"
-                value={expenseDesc}
-                onChange={(e) => setExpenseDesc(e.target.value)}
-              />
+            </div>
+            <div>
+              <label className="label">Expense date</label>
               <input
+                className="input"
+                type="date"
+                value={expenseDate}
+                onChange={(e) => setExpenseDate(e.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label className="label">Receipt URL (optional)</label>
+              <input
+                className="input"
                 type="url"
-                placeholder="Receipt URL (optional)"
+                placeholder="https://..."
                 value={expenseReceiptUrl}
                 onChange={(e) => setExpenseReceiptUrl(e.target.value)}
               />
-              <button type="submit">Log Expense</button>
-              {expenseMsg && <span>{expenseMsg}</span>}
-            </form>
-          </section>
-        </>
+            </div>
+            <div className="md:col-span-2">
+              <label className="label">Description</label>
+              <textarea
+                className="input h-24"
+                placeholder="What was this expense for?"
+                value={expenseDesc}
+                onChange={(e) => setExpenseDesc(e.target.value)}
+              />
+            </div>
+            <div className="md:col-span-2 flex items-center gap-3">
+              <button className="btn-primary" type="submit">
+                Log Expense
+              </button>
+              {expenseMsg && <div className="text-sm text-ink">{expenseMsg}</div>}
+            </div>
+          </form>
+        </section>
       )}
 
       {role === "admin" && (
-        <section style={{ marginTop: "1.5rem" }}>
-          <h2>Admin: Approve Receipt</h2>
-          <form onSubmit={submitApproveReceipt} style={{ display: "grid", gap: "0.5rem", maxWidth: 360 }}>
+        <section className="section">
+          <h3 className="heading">Admin: Approve Receipt</h3>
+          <p className="subtle mb-3">Mark a receipt as approved to update balances.</p>
+          <form onSubmit={submitApproveReceipt} className="flex flex-col gap-3 max-w-md">
             <input
+              className="input"
               type="text"
               placeholder="receipt_id"
               value={approveReceiptId}
               onChange={(e) => setApproveReceiptId(e.target.value)}
               required
             />
-            <button type="submit">Approve Receipt</button>
-            {approveMsg && <span>{approveMsg}</span>}
+            <button className="btn-primary" type="submit">
+              Approve Receipt
+            </button>
+            {approveMsg && <div className="text-sm text-ink">{approveMsg}</div>}
           </form>
         </section>
       )}
-    </main>
+    </div>
   );
 }
