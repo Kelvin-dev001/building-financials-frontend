@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 
 export default function Home() {
@@ -41,6 +41,17 @@ export default function Home() {
   const [expenses, setExpenses] = useState([]);
   const [listError, setListError] = useState("");
 
+  // Reports
+  const [report, setReport] = useState(null);
+  const [reportError, setReportError] = useState("");
+
+  // Flags/comments UI
+  const [flagExpenseId, setFlagExpenseId] = useState("");
+  const [flagMsg, setFlagMsg] = useState("");
+  const [commentExpenseId, setCommentExpenseId] = useState("");
+  const [commentText, setCommentText] = useState("");
+  const [commentMsg, setCommentMsg] = useState("");
+
   const authHeaders = () =>
     session?.access_token
       ? { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" }
@@ -67,53 +78,84 @@ export default function Home() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  // Me + lists
+  const fetchMe = useCallback(async () => {
+    if (!session?.access_token) {
+      setMe(null);
+      return;
+    }
+    try {
+      const res = await fetch(`${apiBase}/api/me`, { headers: authHeaders() });
+      const json = await res.json();
+      if (res.ok) setMe(json);
+      else setMe({ error: json.error });
+    } catch (err) {
+      setMe({ error: err.message });
+    }
+  }, [apiBase, session]);
+
+  const fetchLists = useCallback(async () => {
+    if (!session?.access_token) return;
+    setListError("");
+    try {
+      const [cRes, rRes, eRes] = await Promise.all([
+        fetch(`${apiBase}/api/contributions`, { headers: authHeaders() }),
+        fetch(`${apiBase}/api/receipts`, { headers: authHeaders() }),
+        fetch(`${apiBase}/api/expenses`, { headers: authHeaders() })
+      ]);
+      const cJson = await cRes.json();
+      const rJson = await rRes.json();
+      const eJson = await eRes.json();
+      if (cRes.ok) setContribs(cJson || []);
+      else setListError(cJson.error || "Error loading contributions");
+      if (rRes.ok) setReceipts(rJson || []);
+      else setListError((prev) => prev || rJson.error || "Error loading receipts");
+      if (eRes.ok) setExpenses(eJson || []);
+      else setListError((prev) => prev || eJson.error || "Error loading expenses");
+    } catch (err) {
+      setListError(err.message);
+    }
+  }, [apiBase, session]);
+
+  const fetchReport = useCallback(async () => {
+    if (!session?.access_token) return;
+    setReportError("");
+    try {
+      const res = await fetch(`${apiBase}/api/reports/summary`, { headers: authHeaders() });
+      const json = await res.json();
+      if (res.ok) setReport(json);
+      else setReportError(json.error || "Error loading report");
+    } catch (err) {
+      setReportError(err.message);
+    }
+  }, [apiBase, session]);
+
+  // Load me, lists, report when session changes
   useEffect(() => {
-    const fetchMe = async () => {
-      if (!session?.access_token) {
-        setMe(null);
-        setContribs([]);
-        setReceipts([]);
-        setExpenses([]);
-        return;
-      }
-      try {
-        const res = await fetch(`${apiBase}/api/me`, { headers: authHeaders() });
-        const json = await res.json();
-        if (res.ok) setMe(json);
-        else setMe({ error: json.error });
-      } catch (err) {
-        setMe({ error: err.message });
-      }
-    };
-
-    const fetchLists = async () => {
-      if (!session?.access_token) return;
-      setListError("");
-      try {
-        const [cRes, rRes, eRes] = await Promise.all([
-          fetch(`${apiBase}/api/contributions`, { headers: authHeaders() }),
-          fetch(`${apiBase}/api/receipts`, { headers: authHeaders() }),
-          fetch(`${apiBase}/api/expenses`, { headers: authHeaders() })
-        ]);
-        const cJson = await cRes.json();
-        const rJson = await rRes.json();
-        const eJson = await eRes.json();
-        if (cRes.ok) setContribs(cJson || []);
-        else setListError(cJson.error || "Error loading contributions");
-        if (rRes.ok) setReceipts(rJson || []);
-        else setListError((prev) => prev || rJson.error || "Error loading receipts");
-        if (eRes.ok) setExpenses(eJson || []);
-        else setListError((prev) => prev || eJson.error || "Error loading expenses");
-      } catch (err) {
-        setListError(err.message);
-      }
-    };
-
     fetchMe();
     fetchLists();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session]);
+    fetchReport();
+  }, [fetchMe, fetchLists, fetchReport]);
+
+  // Realtime: listen to receipts & expenses to refresh lists/reports
+  useEffect(() => {
+    if (!session?.access_token) return;
+
+    const channel = supabase
+      .channel("realtime:receipts_expenses")
+      .on("postgres_changes", { event: "*", schema: "public", table: "receipts" }, () => {
+        fetchLists();
+        fetchReport();
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, () => {
+        fetchLists();
+        fetchReport();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [session, fetchLists, fetchReport]);
 
   // Auth actions
   const handleLogin = async (e) => {
@@ -125,6 +167,7 @@ export default function Home() {
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setMe(null);
+    setReport(null);
   };
 
   // Investor: contribution
@@ -141,6 +184,8 @@ export default function Home() {
       setContribMsg("Contribution created (pending).");
       setContribAmount("");
       setContribNote("");
+      fetchLists();
+      fetchReport();
     } else setContribMsg(json.error || "Error");
   };
 
@@ -163,6 +208,8 @@ export default function Home() {
       setReceiptContributionId("");
       setReceiptKes("");
       setReceiptFx("");
+      fetchLists();
+      fetchReport();
     } else setReceiptMsg(json.error || "Error");
   };
 
@@ -189,6 +236,8 @@ export default function Home() {
       setExpenseDate("");
       setExpenseDesc("");
       setExpenseReceiptUrl("");
+      fetchLists();
+      fetchReport();
     } else setExpenseMsg(json.error || "Error");
   };
 
@@ -204,7 +253,58 @@ export default function Home() {
     if (res.ok) {
       setApproveMsg("Receipt approved.");
       setApproveReceiptId("");
+      fetchLists();
+      fetchReport();
     } else setApproveMsg(json.error || "Error");
+  };
+
+  // Flag
+  const submitFlag = async (e) => {
+    e.preventDefault();
+    setFlagMsg("");
+    const res = await fetch(`${apiBase}/api/expenses/${flagExpenseId}/flag`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ flagged: true })
+    });
+    const json = await res.json();
+    if (res.ok) {
+      setFlagMsg("Expense flagged.");
+      setFlagExpenseId("");
+      fetchLists();
+      fetchReport();
+    } else setFlagMsg(json.error || "Error");
+  };
+
+  // Comment
+  const submitComment = async (e) => {
+    e.preventDefault();
+    setCommentMsg("");
+    const res = await fetch(`${apiBase}/api/expenses/${commentExpenseId}/comments`, {
+      method: "POST",
+      headers: authHeaders(),
+      body: JSON.stringify({ comment: commentText })
+    });
+    const json = await res.json();
+    if (res.ok) {
+      setCommentMsg("Comment added.");
+      setCommentExpenseId("");
+      setCommentText("");
+    } else setCommentMsg(json.error || "Error");
+  };
+
+  // Exports
+  const downloadFile = async (path, filename, mime) => {
+    const res = await fetch(`${apiBase}${path}`, { headers: authHeaders() });
+    if (!res.ok) return alert("Export failed");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.type = mime;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const role = me?.role;
@@ -263,17 +363,64 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Who am I */}
+      {/* Who am I & Reports */}
       <section className="section">
-        <h2 className="heading">Session & Role</h2>
-        <p className="subtle mb-3">Your identity and assigned role.</p>
-        {me ? (
-          <pre className="bg-white/80 rounded-xl p-4 border border-white/60 text-sm overflow-x-auto">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div>
+            <h2 className="heading">Session & Role</h2>
+            {me ? (
+              <pre className="bg-white/80 rounded-xl p-4 border border-white/60 text-sm overflow-x-auto">
 {JSON.stringify(me, null, 2)}
-          </pre>
-        ) : (
-          <p className="subtle">Not loaded.</p>
-        )}
+              </pre>
+            ) : (
+              <p className="subtle">Not loaded.</p>
+            )}
+          </div>
+          <div>
+            <h2 className="heading">Reports (Summary)</h2>
+            {reportError && <p className="text-red-600 text-sm mb-2">{reportError}</p>}
+            {report ? (
+              <div className="space-y-3 text-sm">
+                <div className="glass p-3">
+                  <div className="font-semibold">Balances</div>
+                  <div>Total Received (KES): {report.balances?.total_received_kes ?? "-"}</div>
+                  <div>Total Expenses (KES): {report.balances?.total_expenses_kes ?? "-"}</div>
+                  <div>Balance (KES): {report.balances?.balance_kes ?? "-"}</div>
+                </div>
+                <div className="glass p-3">
+                  <div className="font-semibold">Contributions by Investor</div>
+                  <ul className="list-disc list-inside">
+                    {(report.contributions_by_investor || []).map((c) => (
+                      <li key={c.investor_id}>
+                        {(c.investor_name || c.investor_id)} — EUR {c.total_eur}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="glass p-3">
+                  <div className="font-semibold">Expenses by Category</div>
+                  <ul className="list-disc list-inside">
+                    {(report.expenses_by_category || []).map((e, i) => (
+                      <li key={i}>{e.category}: KES {e.total_kes}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="glass p-3">
+                  <div className="font-semibold">Monthly Cashflow</div>
+                  <ul className="list-disc list-inside">
+                    {(report.monthly_cashflow || []).map((m, i) => (
+                      <li key={i}>
+                        {m.month}: inflow {m.inflow_kes}, outflow {m.outflow_kes}, net {m.net_kes}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            ) : (
+              <p className="subtle">No report data yet.</p>
+            )}
+          </div>
+        </div>
       </section>
 
       {/* Lists */}
@@ -304,7 +451,6 @@ export default function Home() {
         {(role === "investor" || role === "admin") && (
           <section className="section">
             <h3 className="heading">Investor: Create Contribution (EUR)</h3>
-            <p className="subtle mb-3">Record funds you sent. Status starts as pending.</p>
             <form onSubmit={submitContribution} className="space-y-3">
               <div>
                 <label className="label">EUR amount</label>
@@ -338,7 +484,6 @@ export default function Home() {
         {(role === "developer" || role === "admin") && (
           <section className="section">
             <h3 className="heading">Developer: Confirm Receipt (KES)</h3>
-            <p className="subtle mb-3">Confirm the KES received against a contribution.</p>
             <form onSubmit={submitReceipt} className="space-y-3">
               <div>
                 <label className="label">Contribution ID</label>
@@ -386,7 +531,6 @@ export default function Home() {
       {(role === "developer" || role === "admin") && (
         <section className="section">
           <h3 className="heading">Developer: Log Expense</h3>
-          <p className="subtle mb-3">Record project spending in KES.</p>
           <form onSubmit={submitExpense} className="grid gap-4 md:grid-cols-2">
             <div>
               <label className="label">Amount (KES)</label>
@@ -454,7 +598,6 @@ export default function Home() {
       {role === "admin" && (
         <section className="section">
           <h3 className="heading">Admin: Approve Receipt</h3>
-          <p className="subtle mb-3">Mark a receipt as approved to update balances.</p>
           <form onSubmit={submitApproveReceipt} className="flex flex-col gap-3 max-w-md">
             <input
               className="input"
@@ -469,6 +612,87 @@ export default function Home() {
             </button>
             {approveMsg && <div className="text-sm text-ink">{approveMsg}</div>}
           </form>
+        </section>
+      )}
+
+      {(role === "investor" || role === "admin") && (
+        <section className="section">
+          <h3 className="heading">Flags & Comments</h3>
+          <div className="grid gap-4 md:grid-cols-2">
+            <form onSubmit={submitFlag} className="flex flex-col gap-3 glass p-4">
+              <div>
+                <label className="label">Expense ID to flag</label>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="expense_id"
+                  value={flagExpenseId}
+                  onChange={(e) => setFlagExpenseId(e.target.value)}
+                  required
+                />
+              </div>
+              <button className="btn-primary" type="submit">
+                Flag Expense
+              </button>
+              {flagMsg && <div className="text-sm text-ink">{flagMsg}</div>}
+            </form>
+
+            <form onSubmit={submitComment} className="flex flex-col gap-3 glass p-4">
+              <div>
+                <label className="label">Expense ID to comment</label>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="expense_id"
+                  value={commentExpenseId}
+                  onChange={(e) => setCommentExpenseId(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="label">Comment</label>
+                <textarea
+                  className="input h-20"
+                  placeholder="Add your note"
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  required
+                />
+              </div>
+              <button className="btn-primary" type="submit">
+                Add Comment
+              </button>
+              {commentMsg && <div className="text-sm text-ink">{commentMsg}</div>}
+            </form>
+          </div>
+        </section>
+      )}
+
+      {role === "admin" && (
+        <section className="section">
+          <h3 className="heading">Exports</h3>
+          <div className="flex flex-wrap gap-3">
+            <button
+              className="btn-primary"
+              type="button"
+              onClick={() => downloadFile("/api/export/pdf", "financials.pdf", "application/pdf")}
+            >
+              Download PDF
+            </button>
+            <button
+              className="btn-primary"
+              type="button"
+              onClick={() =>
+                downloadFile(
+                  "/api/export/excel",
+                  "financials.xlsx",
+                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+              }
+            >
+              Download Excel
+            </button>
+          </div>
         </section>
       )}
     </div>
