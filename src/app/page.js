@@ -35,13 +35,18 @@ export default function Home() {
   const [approveReceiptId, setApproveReceiptId] = useState("");
   const [approveMsg, setApproveMsg] = useState("");
 
-  // Helpers
+  // Lists
+  const [contribs, setContribs] = useState([]);
+  const [receipts, setReceipts] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [listError, setListError] = useState("");
+
   const authHeaders = () =>
     session?.access_token
       ? { Authorization: `Bearer ${session.access_token}`, "Content-Type": "application/json" }
       : { "Content-Type": "application/json" };
 
-  // Check backend health
+  // Health
   useEffect(() => {
     const check = async () => {
       try {
@@ -55,32 +60,61 @@ export default function Home() {
     check();
   }, [apiBase]);
 
-  // Session listener
+  // Session
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => {
-      setSession(sess);
-    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => setSession(sess));
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  // Fetch /api/me
+  // Me + lists
   useEffect(() => {
     const fetchMe = async () => {
       if (!session?.access_token) {
         setMe(null);
+        setContribs([]);
+        setReceipts([]);
+        setExpenses([]);
         return;
       }
       try {
         const res = await fetch(`${apiBase}/api/me`, { headers: authHeaders() });
         const json = await res.json();
-        if (res.ok) setMe(json);
-        else setMe({ error: json.error });
+        if (res.ok) {
+          setMe(json);
+        } else {
+          setMe({ error: json.error });
+        }
       } catch (err) {
         setMe({ error: err.message });
       }
     };
+
+    const fetchLists = async () => {
+      if (!session?.access_token) return;
+      setListError("");
+      try {
+        const [cRes, rRes, eRes] = await Promise.all([
+          fetch(`${apiBase}/api/contributions`, { headers: authHeaders() }),
+          fetch(`${apiBase}/api/receipts`, { headers: authHeaders() }),
+          fetch(`${apiBase}/api/expenses`, { headers: authHeaders() })
+        ]);
+        const cJson = await cRes.json();
+        const rJson = await rRes.json();
+        const eJson = await eRes.json();
+        if (cRes.ok) setContribs(cJson || []);
+        else setListError(cJson.error || "Error loading contributions");
+        if (rRes.ok) setReceipts(rJson || []);
+        else setListError((prev) => prev || rJson.error || "Error loading receipts");
+        if (eRes.ok) setExpenses(eJson || []);
+        else setListError((prev) => prev || eJson.error || "Error loading expenses");
+      } catch (err) {
+        setListError(err.message);
+      }
+    };
+
     fetchMe();
+    fetchLists();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
@@ -91,13 +125,12 @@ export default function Home() {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) setAuthError(error.message);
   };
-
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setMe(null);
   };
 
-  // Investor: create contribution
+  // Investor: contribution
   const submitContribution = async (e) => {
     e.preventDefault();
     setContribMsg("");
@@ -114,7 +147,7 @@ export default function Home() {
     } else setContribMsg(json.error || "Error");
   };
 
-  // Developer: confirm receipt
+  // Developer: receipt
   const submitReceipt = async (e) => {
     e.preventDefault();
     setReceiptMsg("");
@@ -136,7 +169,7 @@ export default function Home() {
     } else setReceiptMsg(json.error || "Error");
   };
 
-  // Developer: log expense
+  // Developer: expense
   const submitExpense = async (e) => {
     e.preventDefault();
     setExpenseMsg("");
@@ -180,7 +213,7 @@ export default function Home() {
   const role = me?.role;
 
   return (
-    <main style={{ padding: "2rem", maxWidth: 960, margin: "0 auto", fontFamily: "Inter, sans-serif" }}>
+    <main style={{ padding: "2rem", maxWidth: 1100, margin: "0 auto", fontFamily: "Inter, sans-serif" }}>
       <h1>Building Project Financial Management</h1>
       <p>Backend status: {apiStatus}</p>
 
@@ -215,7 +248,24 @@ export default function Home() {
         {me ? <pre>{JSON.stringify(me, null, 2)}</pre> : <p>Not loaded.</p>}
       </section>
 
-      {/* Investor form */}
+      {/* Lists */}
+      {listError && <p style={{ color: "red" }}>{listError}</p>}
+
+      <section style={{ marginTop: "1.5rem" }}>
+        <h2>Contributions</h2>
+        <pre>{JSON.stringify(contribs, null, 2)}</pre>
+      </section>
+
+      <section style={{ marginTop: "1.5rem" }}>
+        <h2>Receipts</h2>
+        <pre>{JSON.stringify(receipts, null, 2)}</pre>
+      </section>
+
+      <section style={{ marginTop: "1.5rem" }}>
+        <h2>Expenses</h2>
+        <pre>{JSON.stringify(expenses, null, 2)}</pre>
+      </section>
+
       {(role === "investor" || role === "admin") && (
         <section style={{ marginTop: "1.5rem" }}>
           <h2>Investor: Create Contribution (EUR)</h2>
@@ -239,7 +289,6 @@ export default function Home() {
         </section>
       )}
 
-      {/* Developer forms */}
       {(role === "developer" || role === "admin") && (
         <>
           <section style={{ marginTop: "1.5rem" }}>
@@ -288,12 +337,7 @@ export default function Home() {
                 <option value="labour">labour</option>
                 <option value="other">other</option>
               </select>
-              <input
-                type="date"
-                value={expenseDate}
-                onChange={(e) => setExpenseDate(e.target.value)}
-                required
-              />
+              <input type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} required />
               <textarea
                 placeholder="Description"
                 value={expenseDesc}
@@ -312,7 +356,6 @@ export default function Home() {
         </>
       )}
 
-      {/* Admin actions */}
       {role === "admin" && (
         <section style={{ marginTop: "1.5rem" }}>
           <h2>Admin: Approve Receipt</h2>
