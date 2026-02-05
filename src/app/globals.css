@@ -15,7 +15,7 @@ body {
 }
 
 .btn {
-  @apply inline-flex items-center justify-center rounded-lg px-4 py-2 font-medium transition;
+  @apply inline-flex items-center justify-center rounded-lg px-4 py-2 font-medium transition w-full sm:w-auto;
 }
 
 .btn-primary {
@@ -35,7 +35,7 @@ body {
 }
 
 .section {
-  @apply glass p-6 lg:p-8;
+  @apply glass p-5 sm:p-6 lg:p-8;
 }
 
 .heading {
@@ -48,4 +48,26 @@ body {
 
 .badge {
   @apply inline-flex items-center rounded-full bg-ink/10 px-3 py-1 text-xs font-semibold text-ink;
+}
+
+/* Toasts */
+.toast-container {
+  @apply fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 w-[90%] sm:w-[360px];
+}
+.toast {
+  @apply glass border border-white/60 px-4 py-3 text-sm shadow-lg;
+}
+.toast-success {
+  @apply text-green-700;
+}
+.toast-error {
+  @apply text-red-700;
+}
+
+/* Sticky action bar on mobile */
+.sticky-bar {
+  @apply fixed bottom-0 left-0 right-0 z-40 bg-white/90 backdrop-blur-md border-t border-white/60 shadow-card;
+}
+.sticky-bar-inner {
+  @apply flex flex-col sm:flex-row gap-2 px-4 py-3;
 }

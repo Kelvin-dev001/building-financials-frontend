@@ -3,8 +3,74 @@
 import { useEffect, useState, useCallback } from "react";
 import { supabase } from "../lib/supabaseClient";
 
+function Toasts({ toasts, remove }) {
+  return (
+    <div className="toast-container">
+      {toasts.map((t) => (
+        <div key={t.id} className={`toast ${t.type === "error" ? "toast-error" : "toast-success"}`}>
+          <div className="flex justify-between gap-3">
+            <span>{t.message}</span>
+            <button onClick={() => remove(t.id)} className="text-ink/60 font-bold">×</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function useToasts() {
+  const [toasts, setToasts] = useState([]);
+  const add = (message, type = "success") => {
+    const id = Date.now();
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => remove(id), 4000);
+  };
+  const remove = (id) => setToasts((prev) => prev.filter((t) => t.id !== id));
+  return { toasts, add, remove };
+}
+
+function AdminLockDeleteForm({ apiBase, session, toast }) {
+  const [table, setTable] = useState("contributions");
+  const [rowId, setRowId] = useState("");
+  const doCall = async (path) => {
+    const res = await fetch(`${apiBase}${path}`, {
+      method: "POST",
+      headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}
+    });
+    const json = await res.json();
+    if (res.ok) toast("Done");
+    else toast(json.error || "Error", "error");
+  };
+  return (
+    <div className="glass p-4 flex flex-col gap-2 max-w-md">
+      <select className="input" value={table} onChange={(e) => setTable(e.target.value)}>
+        <option value="contributions">contributions</option>
+        <option value="receipts">receipts</option>
+        <option value="expenses">expenses</option>
+        <option value="expense_comments">expense_comments</option>
+      </select>
+      <input
+        className="input"
+        type="text"
+        placeholder="row id"
+        value={rowId}
+        onChange={(e) => setRowId(e.target.value)}
+      />
+      <div className="flex gap-2 flex-wrap">
+        <button className="btn-primary" type="button" onClick={() => doCall(`/api/admin/${table}/${rowId}/lock`)}>
+          Lock
+        </button>
+        <button className="btn-ghost" type="button" onClick={() => doCall(`/api/admin/${table}/${rowId}/soft-delete`)}>
+          Soft-delete
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const apiBase = process.env.NEXT_PUBLIC_API_BASE || "https://building-financials-backend.onrender.com";
+  const { toasts, add: addToast, remove: removeToast } = useToasts();
 
   const [apiStatus, setApiStatus] = useState("Checking...");
   const [session, setSession] = useState(null);
@@ -18,39 +84,27 @@ export default function Home() {
   // Forms state
   const [contribAmount, setContribAmount] = useState("");
   const [contribNote, setContribNote] = useState("");
-  const [contribMsg, setContribMsg] = useState("");
-
   const [receiptContributionId, setReceiptContributionId] = useState("");
   const [receiptKes, setReceiptKes] = useState("");
   const [receiptFx, setReceiptFx] = useState("");
-  const [receiptMsg, setReceiptMsg] = useState("");
-
   const [expenseAmount, setExpenseAmount] = useState("");
   const [expenseCategory, setExpenseCategory] = useState("materials");
   const [expenseDate, setExpenseDate] = useState("");
   const [expenseDesc, setExpenseDesc] = useState("");
   const [expenseReceiptUrl, setExpenseReceiptUrl] = useState("");
-  const [expenseMsg, setExpenseMsg] = useState("");
-
   const [approveReceiptId, setApproveReceiptId] = useState("");
-  const [approveMsg, setApproveMsg] = useState("");
+  const [flagExpenseId, setFlagExpenseId] = useState("");
+  const [commentExpenseId, setCommentExpenseId] = useState("");
+  const [commentText, setCommentText] = useState("");
+  const [uploadFile, setUploadFile] = useState(null);
 
   // Lists
   const [contribs, setContribs] = useState([]);
   const [receipts, setReceipts] = useState([]);
   const [expenses, setExpenses] = useState([]);
-  const [listError, setListError] = useState("");
 
   // Reports
   const [report, setReport] = useState(null);
-  const [reportError, setReportError] = useState("");
-
-  // Flags/comments UI
-  const [flagExpenseId, setFlagExpenseId] = useState("");
-  const [flagMsg, setFlagMsg] = useState("");
-  const [commentExpenseId, setCommentExpenseId] = useState("");
-  const [commentText, setCommentText] = useState("");
-  const [commentMsg, setCommentMsg] = useState("");
 
   const authHeaders = () =>
     session?.access_token
@@ -63,7 +117,7 @@ export default function Home() {
       try {
         const res = await fetch(`${apiBase}/health`);
         const json = await res.json();
-        setApiStatus(json.ok ? "API OK" : `API error: ${json.error}`);
+        setApiStatus(json.ok ? `API OK${json.audit_mode ? " (audit mode)" : ""}` : `API error: ${json.error}`);
       } catch (err) {
         setApiStatus(`API unreachable: ${err.message}`);
       }
@@ -71,7 +125,7 @@ export default function Home() {
     check();
   }, [apiBase]);
 
-  // Session listener
+  // Session
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
     const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => setSession(sess));
@@ -95,7 +149,6 @@ export default function Home() {
 
   const fetchLists = useCallback(async () => {
     if (!session?.access_token) return;
-    setListError("");
     try {
       const [cRes, rRes, eRes] = await Promise.all([
         fetch(`${apiBase}/api/contributions`, { headers: authHeaders() }),
@@ -106,40 +159,33 @@ export default function Home() {
       const rJson = await rRes.json();
       const eJson = await eRes.json();
       if (cRes.ok) setContribs(cJson || []);
-      else setListError(cJson.error || "Error loading contributions");
       if (rRes.ok) setReceipts(rJson || []);
-      else setListError((prev) => prev || rJson.error || "Error loading receipts");
       if (eRes.ok) setExpenses(eJson || []);
-      else setListError((prev) => prev || eJson.error || "Error loading expenses");
     } catch (err) {
-      setListError(err.message);
+      addToast(err.message, "error");
     }
-  }, [apiBase, session]);
+  }, [apiBase, session, addToast]);
 
   const fetchReport = useCallback(async () => {
     if (!session?.access_token) return;
-    setReportError("");
     try {
       const res = await fetch(`${apiBase}/api/reports/summary`, { headers: authHeaders() });
       const json = await res.json();
       if (res.ok) setReport(json);
-      else setReportError(json.error || "Error loading report");
     } catch (err) {
-      setReportError(err.message);
+      addToast(err.message, "error");
     }
-  }, [apiBase, session]);
+  }, [apiBase, session, addToast]);
 
-  // Load me, lists, report when session changes
   useEffect(() => {
     fetchMe();
     fetchLists();
     fetchReport();
   }, [fetchMe, fetchLists, fetchReport]);
 
-  // Realtime: listen to receipts & expenses to refresh lists/reports
+  // Realtime refresh
   useEffect(() => {
     if (!session?.access_token) return;
-
     const channel = supabase
       .channel("realtime:receipts_expenses")
       .on("postgres_changes", { event: "*", schema: "public", table: "receipts" }, () => {
@@ -151,29 +197,33 @@ export default function Home() {
         fetchReport();
       })
       .subscribe();
-
     return () => {
       supabase.removeChannel(channel);
     };
   }, [session, fetchLists, fetchReport]);
 
-  // Auth actions
+  // Auth
   const handleLogin = async (e) => {
     e.preventDefault();
     setAuthError("");
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setAuthError(error.message);
+    if (error) {
+      setAuthError(error.message);
+      addToast(error.message, "error");
+    } else {
+      addToast("Logged in");
+    }
   };
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setMe(null);
     setReport(null);
+    addToast("Logged out");
   };
 
   // Investor: contribution
   const submitContribution = async (e) => {
     e.preventDefault();
-    setContribMsg("");
     const res = await fetch(`${apiBase}/api/contributions`, {
       method: "POST",
       headers: authHeaders(),
@@ -181,18 +231,17 @@ export default function Home() {
     });
     const json = await res.json();
     if (res.ok) {
-      setContribMsg("Contribution created (pending).");
+      addToast("Contribution created");
       setContribAmount("");
       setContribNote("");
       fetchLists();
       fetchReport();
-    } else setContribMsg(json.error || "Error");
+    } else addToast(json.error || "Error", "error");
   };
 
   // Developer: receipt
   const submitReceipt = async (e) => {
     e.preventDefault();
-    setReceiptMsg("");
     const res = await fetch(`${apiBase}/api/receipts`, {
       method: "POST",
       headers: authHeaders(),
@@ -204,19 +253,18 @@ export default function Home() {
     });
     const json = await res.json();
     if (res.ok) {
-      setReceiptMsg("Receipt logged (awaiting approval).");
+      addToast("Receipt logged");
       setReceiptContributionId("");
       setReceiptKes("");
       setReceiptFx("");
       fetchLists();
       fetchReport();
-    } else setReceiptMsg(json.error || "Error");
+    } else addToast(json.error || "Error", "error");
   };
 
   // Developer: expense
   const submitExpense = async (e) => {
     e.preventDefault();
-    setExpenseMsg("");
     const res = await fetch(`${apiBase}/api/expenses`, {
       method: "POST",
       headers: authHeaders(),
@@ -230,7 +278,7 @@ export default function Home() {
     });
     const json = await res.json();
     if (res.ok) {
-      setExpenseMsg("Expense logged.");
+      addToast("Expense logged");
       setExpenseAmount("");
       setExpenseCategory("materials");
       setExpenseDate("");
@@ -238,30 +286,28 @@ export default function Home() {
       setExpenseReceiptUrl("");
       fetchLists();
       fetchReport();
-    } else setExpenseMsg(json.error || "Error");
+    } else addToast(json.error || "Error", "error");
   };
 
   // Admin: approve receipt
   const submitApproveReceipt = async (e) => {
     e.preventDefault();
-    setApproveMsg("");
     const res = await fetch(`${apiBase}/api/admin/receipts/${approveReceiptId}/approve`, {
       method: "POST",
       headers: authHeaders()
     });
     const json = await res.json();
     if (res.ok) {
-      setApproveMsg("Receipt approved.");
+      addToast("Receipt approved");
       setApproveReceiptId("");
       fetchLists();
       fetchReport();
-    } else setApproveMsg(json.error || "Error");
+    } else addToast(json.error || "Error", "error");
   };
 
   // Flag
   const submitFlag = async (e) => {
     e.preventDefault();
-    setFlagMsg("");
     const res = await fetch(`${apiBase}/api/expenses/${flagExpenseId}/flag`, {
       method: "POST",
       headers: authHeaders(),
@@ -269,17 +315,16 @@ export default function Home() {
     });
     const json = await res.json();
     if (res.ok) {
-      setFlagMsg("Expense flagged.");
+      addToast("Expense flagged");
       setFlagExpenseId("");
       fetchLists();
       fetchReport();
-    } else setFlagMsg(json.error || "Error");
+    } else addToast(json.error || "Error", "error");
   };
 
   // Comment
   const submitComment = async (e) => {
     e.preventDefault();
-    setCommentMsg("");
     const res = await fetch(`${apiBase}/api/expenses/${commentExpenseId}/comments`, {
       method: "POST",
       headers: authHeaders(),
@@ -287,16 +332,42 @@ export default function Home() {
     });
     const json = await res.json();
     if (res.ok) {
-      setCommentMsg("Comment added.");
+      addToast("Comment added");
       setCommentExpenseId("");
       setCommentText("");
-    } else setCommentMsg(json.error || "Error");
+    } else addToast(json.error || "Error", "error");
+  };
+
+  // Upload receipt
+  const submitUpload = async (e) => {
+    e.preventDefault();
+    if (!uploadFile) {
+      addToast("Select a file", "error");
+      return;
+    }
+    const formData = new FormData();
+    formData.append("file", uploadFile);
+    const res = await fetch(`${apiBase}/api/uploads/receipt`, {
+      method: "POST",
+      headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+      body: formData
+    });
+    const json = await res.json();
+    if (res.ok) {
+      addToast("Uploaded");
+      setUploadFile(null);
+    } else {
+      addToast(json.error || "Upload error", "error");
+    }
   };
 
   // Exports
   const downloadFile = async (path, filename, mime) => {
     const res = await fetch(`${apiBase}${path}`, { headers: authHeaders() });
-    if (!res.ok) return alert("Export failed");
+    if (!res.ok) {
+      addToast("Export failed", "error");
+      return;
+    }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -309,8 +380,22 @@ export default function Home() {
 
   const role = me?.role;
 
+  // Mobile sticky primary actions (per role)
+  const primaryActions = [];
+  if (role === "investor" || role === "admin") {
+    primaryActions.push({ label: "Add Contribution", onClick: () => document.getElementById("contrib-form")?.scrollIntoView({ behavior: "smooth" }) });
+  }
+  if (role === "developer" || role === "admin") {
+    primaryActions.push({ label: "Log Expense", onClick: () => document.getElementById("expense-form")?.scrollIntoView({ behavior: "smooth" }) });
+  }
+  if (role === "admin") {
+    primaryActions.push({ label: "Approve Receipt", onClick: () => document.getElementById("approve-form")?.scrollIntoView({ behavior: "smooth" }) });
+  }
+
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 pb-24">
+      <Toasts toasts={toasts} remove={removeToast} />
+
       {/* Header */}
       <header className="section">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -319,37 +404,20 @@ export default function Home() {
             <h1 className="text-3xl font-bold text-ink">Control Center</h1>
             <p className="subtle">Kenyan project · Investors · Developers · Admin</p>
           </div>
-          <div className="flex flex-col items-start gap-2 md:items-end">
+          <div className="flex flex-col items-start gap-2 md:items-end w-full sm:w-auto">
             <span className="badge">{apiStatus}</span>
             {session ? (
-              <div className="text-right">
-                <p className="text-sm text-ink/80">{session.user.email}</p>
-                <button className="btn-ghost mt-2" onClick={handleLogout}>
+              <div className="text-right w-full sm:w-auto">
+                <p className="text-sm text-ink/80 break-words">{session.user.email}</p>
+                <button className="btn-ghost mt-2 w-full sm:w-auto" onClick={handleLogout}>
                   Logout
                 </button>
               </div>
             ) : (
-              <form
-                onSubmit={handleLogin}
-                className="glass p-4 w-full max-w-sm flex flex-col gap-2 border border-white/50"
-              >
+              <form onSubmit={handleLogin} className="glass p-4 w-full sm:w-80 flex flex-col gap-2 border border-white/50">
                 <h3 className="text-lg font-semibold text-ink">Sign In</h3>
-                <input
-                  className="input"
-                  type="email"
-                  placeholder="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-                <input
-                  className="input"
-                  type="password"
-                  placeholder="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
+                <input className="input" type="email" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+                <input className="input" type="password" placeholder="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
                 <button className="btn-primary" type="submit">
                   Sign In
                 </button>
@@ -363,7 +431,7 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Who am I & Reports */}
+      {/* Session & Reports */}
       <section className="section">
         <div className="grid gap-6 lg:grid-cols-2">
           <div>
@@ -378,7 +446,6 @@ export default function Home() {
           </div>
           <div>
             <h2 className="heading">Reports (Summary)</h2>
-            {reportError && <p className="text-red-600 text-sm mb-2">{reportError}</p>}
             {report ? (
               <div className="space-y-3 text-sm">
                 <div className="glass p-3">
@@ -391,9 +458,7 @@ export default function Home() {
                   <div className="font-semibold">Contributions by Investor</div>
                   <ul className="list-disc list-inside">
                     {(report.contributions_by_investor || []).map((c) => (
-                      <li key={c.investor_id}>
-                        {(c.investor_name || c.investor_id)} — EUR {c.total_eur}
-                      </li>
+                      <li key={c.investor_id}>{(c.investor_name || c.investor_id)} — EUR {c.total_eur}</li>
                     ))}
                   </ul>
                 </div>
@@ -427,7 +492,6 @@ export default function Home() {
       <section className="grid gap-6 lg:grid-cols-3">
         <div className="section">
           <h3 className="heading">Contributions</h3>
-          {listError && <p className="text-red-600 text-sm mb-2">{listError}</p>}
           <pre className="bg-white/80 rounded-xl p-3 border border-white/60 text-xs max-h-64 overflow-auto">
 {JSON.stringify(contribs, null, 2)}
           </pre>
@@ -449,34 +513,18 @@ export default function Home() {
       {/* Forms */}
       <div className="grid gap-6 lg:grid-cols-2">
         {(role === "investor" || role === "admin") && (
-          <section className="section">
+          <section className="section" id="contrib-form">
             <h3 className="heading">Investor: Create Contribution (EUR)</h3>
             <form onSubmit={submitContribution} className="space-y-3">
               <div>
                 <label className="label">EUR amount</label>
-                <input
-                  className="input"
-                  type="number"
-                  step="0.01"
-                  placeholder="1000.00"
-                  value={contribAmount}
-                  onChange={(e) => setContribAmount(e.target.value)}
-                  required
-                />
+                <input className="input" type="number" step="0.01" placeholder="1000.00" value={contribAmount} onChange={(e) => setContribAmount(e.target.value)} required />
               </div>
               <div>
                 <label className="label">Note (optional)</label>
-                <textarea
-                  className="input h-24"
-                  placeholder="Description or reference"
-                  value={contribNote}
-                  onChange={(e) => setContribNote(e.target.value)}
-                />
+                <textarea className="input h-24" placeholder="Description or reference" value={contribNote} onChange={(e) => setContribNote(e.target.value)} />
               </div>
-              <button className="btn-primary" type="submit">
-                Create Contribution
-              </button>
-              {contribMsg && <div className="text-sm text-ink">{contribMsg}</div>}
+              <button className="btn-primary" type="submit">Create Contribution</button>
             </form>
           </section>
         )}
@@ -487,70 +535,33 @@ export default function Home() {
             <form onSubmit={submitReceipt} className="space-y-3">
               <div>
                 <label className="label">Contribution ID</label>
-                <input
-                  className="input"
-                  type="text"
-                  placeholder="uuid"
-                  value={receiptContributionId}
-                  onChange={(e) => setReceiptContributionId(e.target.value)}
-                  required
-                />
+                <input className="input" type="text" placeholder="uuid" value={receiptContributionId} onChange={(e) => setReceiptContributionId(e.target.value)} required />
               </div>
               <div>
                 <label className="label">KES received</label>
-                <input
-                  className="input"
-                  type="number"
-                  step="0.01"
-                  placeholder="100000"
-                  value={receiptKes}
-                  onChange={(e) => setReceiptKes(e.target.value)}
-                  required
-                />
+                <input className="input" type="number" step="0.01" placeholder="100000" value={receiptKes} onChange={(e) => setReceiptKes(e.target.value)} required />
               </div>
               <div>
                 <label className="label">FX rate (optional)</label>
-                <input
-                  className="input"
-                  type="number"
-                  step="0.000001"
-                  placeholder="160.123456"
-                  value={receiptFx}
-                  onChange={(e) => setReceiptFx(e.target.value)}
-                />
+                <input className="input" type="number" step="0.000001" placeholder="160.123456" value={receiptFx} onChange={(e) => setReceiptFx(e.target.value)} />
               </div>
-              <button className="btn-primary" type="submit">
-                Log Receipt
-              </button>
-              {receiptMsg && <div className="text-sm text-ink">{receiptMsg}</div>}
+              <button className="btn-primary" type="submit">Log Receipt</button>
             </form>
           </section>
         )}
       </div>
 
       {(role === "developer" || role === "admin") && (
-        <section className="section">
+        <section className="section" id="expense-form">
           <h3 className="heading">Developer: Log Expense</h3>
           <form onSubmit={submitExpense} className="grid gap-4 md:grid-cols-2">
             <div>
               <label className="label">Amount (KES)</label>
-              <input
-                className="input"
-                type="number"
-                step="0.01"
-                placeholder="5000"
-                value={expenseAmount}
-                onChange={(e) => setExpenseAmount(e.target.value)}
-                required
-              />
+              <input className="input" type="number" step="0.01" placeholder="5000" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} required />
             </div>
             <div>
               <label className="label">Category</label>
-              <select
-                className="input"
-                value={expenseCategory}
-                onChange={(e) => setExpenseCategory(e.target.value)}
-              >
+              <select className="input" value={expenseCategory} onChange={(e) => setExpenseCategory(e.target.value)}>
                 <option value="materials">materials</option>
                 <option value="labour">labour</option>
                 <option value="other">other</option>
@@ -558,59 +569,39 @@ export default function Home() {
             </div>
             <div>
               <label className="label">Expense date</label>
-              <input
-                className="input"
-                type="date"
-                value={expenseDate}
-                onChange={(e) => setExpenseDate(e.target.value)}
-                required
-              />
+              <input className="input" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} required />
             </div>
             <div>
               <label className="label">Receipt URL (optional)</label>
-              <input
-                className="input"
-                type="url"
-                placeholder="https://..."
-                value={expenseReceiptUrl}
-                onChange={(e) => setExpenseReceiptUrl(e.target.value)}
-              />
+              <input className="input" type="url" placeholder="https://..." value={expenseReceiptUrl} onChange={(e) => setExpenseReceiptUrl(e.target.value)} />
             </div>
             <div className="md:col-span-2">
               <label className="label">Description</label>
-              <textarea
-                className="input h-24"
-                placeholder="What was this expense for?"
-                value={expenseDesc}
-                onChange={(e) => setExpenseDesc(e.target.value)}
-              />
+              <textarea className="input h-24" placeholder="What was this expense for?" value={expenseDesc} onChange={(e) => setExpenseDesc(e.target.value)} />
             </div>
-            <div className="md:col-span-2 flex items-center gap-3">
-              <button className="btn-primary" type="submit">
-                Log Expense
-              </button>
-              {expenseMsg && <div className="text-sm text-ink">{expenseMsg}</div>}
+            <div className="md:col-span-2 flex items-center gap-3 flex-wrap">
+              <button className="btn-primary" type="submit">Log Expense</button>
             </div>
           </form>
         </section>
       )}
 
-      {role === "admin" && (
+      {(role === "developer" || role === "admin") && (
         <section className="section">
+          <h3 className="heading">Developer: Upload Receipt</h3>
+          <form onSubmit={submitUpload} className="flex flex-col gap-3 max-w-md">
+            <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} className="input" />
+            <button className="btn-primary" type="submit">Upload</button>
+          </form>
+        </section>
+      )}
+
+      {role === "admin" && (
+        <section className="section" id="approve-form">
           <h3 className="heading">Admin: Approve Receipt</h3>
           <form onSubmit={submitApproveReceipt} className="flex flex-col gap-3 max-w-md">
-            <input
-              className="input"
-              type="text"
-              placeholder="receipt_id"
-              value={approveReceiptId}
-              onChange={(e) => setApproveReceiptId(e.target.value)}
-              required
-            />
-            <button className="btn-primary" type="submit">
-              Approve Receipt
-            </button>
-            {approveMsg && <div className="text-sm text-ink">{approveMsg}</div>}
+            <input className="input" type="text" placeholder="receipt_id" value={approveReceiptId} onChange={(e) => setApproveReceiptId(e.target.value)} required />
+            <button className="btn-primary" type="submit">Approve Receipt</button>
           </form>
         </section>
       )}
@@ -622,47 +613,21 @@ export default function Home() {
             <form onSubmit={submitFlag} className="flex flex-col gap-3 glass p-4">
               <div>
                 <label className="label">Expense ID to flag</label>
-                <input
-                  className="input"
-                  type="text"
-                  placeholder="expense_id"
-                  value={flagExpenseId}
-                  onChange={(e) => setFlagExpenseId(e.target.value)}
-                  required
-                />
+                <input className="input" type="text" placeholder="expense_id" value={flagExpenseId} onChange={(e) => setFlagExpenseId(e.target.value)} required />
               </div>
-              <button className="btn-primary" type="submit">
-                Flag Expense
-              </button>
-              {flagMsg && <div className="text-sm text-ink">{flagMsg}</div>}
+              <button className="btn-primary" type="submit">Flag Expense</button>
             </form>
 
             <form onSubmit={submitComment} className="flex flex-col gap-3 glass p-4">
               <div>
                 <label className="label">Expense ID to comment</label>
-                <input
-                  className="input"
-                  type="text"
-                  placeholder="expense_id"
-                  value={commentExpenseId}
-                  onChange={(e) => setCommentExpenseId(e.target.value)}
-                  required
-                />
+                <input className="input" type="text" placeholder="expense_id" value={commentExpenseId} onChange={(e) => setCommentExpenseId(e.target.value)} required />
               </div>
               <div>
                 <label className="label">Comment</label>
-                <textarea
-                  className="input h-20"
-                  placeholder="Add your note"
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  required
-                />
+                <textarea className="input h-20" placeholder="Add your note" value={commentText} onChange={(e) => setCommentText(e.target.value)} required />
               </div>
-              <button className="btn-primary" type="submit">
-                Add Comment
-              </button>
-              {commentMsg && <div className="text-sm text-ink">{commentMsg}</div>}
+              <button className="btn-primary" type="submit">Add Comment</button>
             </form>
           </div>
         </section>
@@ -670,30 +635,43 @@ export default function Home() {
 
       {role === "admin" && (
         <section className="section">
+          <h3 className="heading">Admin: Lock / Soft-delete</h3>
+          <p className="subtle mb-2">Table: contributions | receipts | expenses | expense_comments</p>
+          <AdminLockDeleteForm apiBase={apiBase} session={session} toast={addToast} />
+        </section>
+      )}
+
+      {role === "admin" && (
+        <section className="section">
           <h3 className="heading">Exports</h3>
           <div className="flex flex-wrap gap-3">
-            <button
-              className="btn-primary"
-              type="button"
-              onClick={() => downloadFile("/api/export/pdf", "financials.pdf", "application/pdf")}
-            >
+            <button className="btn-primary" type="button" onClick={() => downloadFile("/api/export/pdf", "financials.pdf", "application/pdf")}>
               Download PDF
             </button>
             <button
               className="btn-primary"
               type="button"
               onClick={() =>
-                downloadFile(
-                  "/api/export/excel",
-                  "financials.xlsx",
-                  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                downloadFile("/api/export/excel", "financials.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
               }
             >
               Download Excel
             </button>
           </div>
         </section>
+      )}
+
+      {/* Sticky action bar (mobile-first) */}
+      {primaryActions.length > 0 && (
+        <div className="sticky-bar">
+          <div className="sticky-bar-inner">
+            {primaryActions.map((a, idx) => (
+              <button key={idx} className="btn-primary w-full" type="button" onClick={a.onClick}>
+                {a.label}
+              </button>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
