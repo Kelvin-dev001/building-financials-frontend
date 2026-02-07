@@ -1,8 +1,8 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Building Financials",
-  description: "Kenyan building project financial tracking"
+  title: "BrickLedger",
+  description: "Enabling smart & transparent investing back at home"
 };
 
 export default function RootLayout({ children }) {
