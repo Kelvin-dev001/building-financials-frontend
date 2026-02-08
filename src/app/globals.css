@@ -11,7 +11,7 @@ body {
 }
 
 .glass {
-  @apply bg-white/70 backdrop-blur-md shadow-card rounded-2xl border border-white/40;
+  @apply bg-white/75 backdrop-blur-md shadow-card rounded-2xl border border-white/50;
 }
 
 .btn {
@@ -23,7 +23,11 @@ body {
 }
 
 .btn-ghost {
-  @apply btn bg-white/70 text-ink hover:bg-white;
+  @apply btn bg-white/80 text-ink hover:bg-white;
+}
+
+.btn-secondary {
+  @apply btn bg-ink/10 text-ink hover:bg-ink/20;
 }
 
 .input {
@@ -64,6 +68,22 @@ body {
   @apply text-red-700;
 }
 
+/* Tabs */
+.tabs {
+  @apply flex flex-wrap gap-2 border-b border-white/60 mb-4;
+}
+.tab {
+  @apply px-3 py-2 rounded-t-lg text-sm font-semibold text-ink/70;
+}
+.tab-active {
+  @apply bg-white text-ink shadow-card border border-white/70 border-b-0;
+}
+
+/* Cards & list */
+.card {
+  @apply glass p-4 flex flex-col gap-2 border border-white/60;
+}
+
 /* Sticky action bar on mobile */
 .sticky-bar {
   @apply fixed bottom-0 left-0 right-0 z-40 bg-white/90 backdrop-blur-md border-t border-white/60 shadow-card;
@@ -71,3 +91,25 @@ body {
 .sticky-bar-inner {
   @apply flex flex-col sm:flex-row gap-2 px-4 py-3;
 }
+
+/* Modals */
+.modal-backdrop {
+  @apply fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center z-50;
+}
+.modal {
+  @apply bg-white rounded-2xl shadow-card p-6 w-[95%] max-w-2xl;
+}
+
+/* Skeletons */
+.skeleton {
+  @apply animate-pulse bg-ink/5 rounded-md;
+}
+
+/* Expense card */
+.expense-card {
+  @apply glass p-4 border border-white/60 flex flex-col gap-2;
+}
+.badge-flagged { @apply bg-red-100 text-red-700; }
+.badge-pending { @apply bg-amber-100 text-amber-700; }
+.badge-approved { @apply bg-green-100 text-green-700; }
+.badge-locked { @apply bg-slate-200 text-slate-700; }
