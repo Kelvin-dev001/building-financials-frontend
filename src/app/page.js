@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
-import { supabase } from "../lib/supabaseClient";
-import { apiFetch } from "../lib/apiClient";
+import { useEffect, useState, useMemo, useCallback } from "react";
+import { supabase } from "@/lib/supabaseClient";
+import { apiFetch } from "@/lib/apiClient";
 
-// Helpers to sanitize optional filter values so we never send "null"/"undefined" strings
+const PAGE_SIZE = 10;
+
+// Sanitizers to avoid sending "null"/"undefined"/empty strings to the API (prevents timestamp parse errors)
 const cleanDate = (v) => (v && v !== "null" && v !== "undefined" ? v : null);
 const cleanString = (v) => (v && v !== "null" && v !== "undefined" ? v : null);
-const PAGE_SIZE = 10;
 
 function Toasts({ toasts, remove }) {
   return (
@@ -37,94 +38,73 @@ function useToasts() {
   return { toasts, add, remove };
 }
 
-function AdminLockDeleteForm({ toast }) {
-  const [table, setTable] = useState("contributions");
-  const [rowId, setRowId] = useState("");
-  const doCall = async (path) => {
-    try {
-      const res = await apiFetch(path, { method: "POST" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Error");
-      toast("Done");
-    } catch (err) {
-      toast(err.message, "error");
-    }
-  };
-  return (
-    <div className="glass p-4 flex flex-col gap-2 max-w-md">
-      <select className="input" value={table} onChange={(e) => setTable(e.target.value)}>
-        <option value="contributions">contributions</option>
-        <option value="receipts">receipts</option>
-        <option value="expenses">expenses</option>
-        <option value="expense_comments">expense_comments</option>
-      </select>
-      <input className="input" type="text" placeholder="row id" value={rowId} onChange={(e) => setRowId(e.target.value)} />
-      <div className="flex gap-2 flex-wrap">
-        <button className="btn-primary" type="button" onClick={() => doCall(`/api/admin/${table}/${rowId}/lock`)}>
-          Lock
-        </button>
-        <button className="btn-ghost" type="button" onClick={() => doCall(`/api/admin/${table}/${rowId}/soft-delete`)}>
-          Soft-delete
-        </button>
-      </div>
-    </div>
-  );
+const statusOptions = [
+  { value: "", label: "Any" },
+  { value: "pending", label: "Pending" },
+  { value: "approved", label: "Approved" },
+  { value: "rejected", label: "Rejected" }
+];
+
+function formatDate(d) {
+  if (!d) return "—";
+  return new Date(d).toLocaleString();
 }
 
 export default function Home() {
-  const apiBase = process.env.NEXT_PUBLIC_API_BASE || "https://building-financials-backend.onrender.com";
   const { toasts, add: addToast, remove: removeToast } = useToasts();
+  const [tab, setTab] = useState("dashboard"); // dashboard | contributions | expenses | reports
 
   const [apiStatus, setApiStatus] = useState("Checking...");
   const [session, setSession] = useState(null);
   const [me, setMe] = useState(null);
   const [authError, setAuthError] = useState("");
-
-  // Auth form
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // Forms state
+  // Filters / pagination
+  const [cFilters, setCFilters] = useState({ startDate: "", endDate: "", status: "", investor_id: "" });
+  const [cPage, setCPage] = useState(1);
+  const [eFilters, setEFilters] = useState({ startDate: "", endDate: "", status: "", category: "" });
+  const [ePage, setEPage] = useState(1);
+
+  // Data
+  const [contribs, setContribs] = useState([]);
+  const [contribTotal, setContribTotal] = useState(0);
+  const [receipts, setReceipts] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [expenseTotal, setExpenseTotal] = useState(0);
+  const [report, setReport] = useState(null);
+  const [investorOptions, setInvestorOptions] = useState([]);
+
+  // UI states
+  const [loadingContribs, setLoadingContribs] = useState(false);
+  const [loadingExpenses, setLoadingExpenses] = useState(false);
+  const [loadingReport, setLoadingReport] = useState(false);
+
+  // Forms
   const [contribAmount, setContribAmount] = useState("");
   const [contribNote, setContribNote] = useState("");
   const [contribDateSent, setContribDateSent] = useState("");
-  const [receiptContributionId, setReceiptContributionId] = useState("");
+  const [selectedContribution, setSelectedContribution] = useState("");
   const [receiptKes, setReceiptKes] = useState("");
   const [receiptFx, setReceiptFx] = useState("");
-  const [expenseAmount, setExpenseAmount] = useState("");
-  const [expenseCategory, setExpenseCategory] = useState("materials");
-  const [expenseDate, setExpenseDate] = useState("");
-  const [expenseDesc, setExpenseDesc] = useState("");
-  const [expenseReceiptUrl, setExpenseReceiptUrl] = useState("");
-  const [approveReceiptId, setApproveReceiptId] = useState("");
-  const [flagExpenseId, setFlagExpenseId] = useState("");
-  const [commentExpenseId, setCommentExpenseId] = useState("");
+
+  const [selectedExpense, setSelectedExpense] = useState("");
   const [commentText, setCommentText] = useState("");
-  const [uploadFile, setUploadFile] = useState(null);
-
-  // Lists and filters
-  const [contribs, setContribs] = useState([]);
-  const [receipts, setReceipts] = useState([]);
-  const [expenses, setExpenses] = useState([]);
-  const [contribFilters] = useState({ startDate: null, endDate: null, status: null, investor_id: null });
-  const [expenseFilters] = useState({ startDate: null, endDate: null, status: null, category: null });
-
-  // Reports
-  const [report, setReport] = useState(null);
 
   // Health
   useEffect(() => {
     const check = async () => {
       try {
-        const res = await fetch(`${apiBase}/health`);
-        const json = await res.json();
+        const apiRes = await fetch("https://building-financials-backend.onrender.com/health");
+        const json = await apiRes.json();
         setApiStatus(json.ok ? `API OK${json.audit_mode ? " (audit mode)" : ""}` : `API error: ${json.error}`);
       } catch (err) {
         setApiStatus(`API unreachable: ${err.message}`);
       }
     };
     check();
-  }, [apiBase]);
+  }, []);
 
   // Session
   useEffect(() => {
@@ -148,92 +128,157 @@ export default function Home() {
     }
   }, [session]);
 
+  // Build query strings with sanitized values
   const contribQueryString = useMemo(() => {
-    const params = new URLSearchParams({ page: "1", limit: String(PAGE_SIZE) });
-    const sDate = cleanDate(contribFilters.startDate);
-    const eDate = cleanDate(contribFilters.endDate);
-    const status = cleanString(contribFilters.status);
-    const investorId = cleanString(contribFilters.investor_id);
+    const params = new URLSearchParams({
+      page: String(cPage),
+      limit: String(PAGE_SIZE)
+    });
+    const sDate = cleanDate(cFilters.startDate);
+    const eDate = cleanDate(cFilters.endDate);
+    const status = cleanString(cFilters.status);
+    const investorId = cleanString(cFilters.investor_id);
     if (sDate) params.set("startDate", sDate);
     if (eDate) params.set("endDate", eDate);
     if (status) params.set("status", status);
     if (investorId) params.set("investor_id", investorId);
     return params.toString();
-  }, [contribFilters]);
+  }, [cFilters, cPage]);
 
   const expenseQueryString = useMemo(() => {
-    const params = new URLSearchParams({ page: "1", limit: String(PAGE_SIZE) });
-    const sDate = cleanDate(expenseFilters.startDate);
-    const eDate = cleanDate(expenseFilters.endDate);
-    const status = cleanString(expenseFilters.status);
-    const category = cleanString(expenseFilters.category);
+    const params = new URLSearchParams({
+      page: String(ePage),
+      limit: String(PAGE_SIZE)
+    });
+    const sDate = cleanDate(eFilters.startDate);
+    const eDate = cleanDate(eFilters.endDate);
+    const status = cleanString(eFilters.status);
+    const category = cleanString(eFilters.category);
     if (sDate) params.set("startDate", sDate);
     if (eDate) params.set("endDate", eDate);
     if (status) params.set("status", status);
     if (category) params.set("category", category);
     return params.toString();
-  }, [expenseFilters]);
+  }, [eFilters, ePage]);
 
   const reportQueryString = useMemo(() => {
     const params = new URLSearchParams();
-    const sDate = cleanDate(contribFilters.startDate);
-    const eDate = cleanDate(contribFilters.endDate);
+    const sDate = cleanDate(cFilters.startDate);
+    const eDate = cleanDate(cFilters.endDate);
     if (sDate) params.set("startDate", sDate);
     if (eDate) params.set("endDate", eDate);
-    return params.toString();
-  }, [contribFilters]);
-
-  const fetchLists = useCallback(async () => {
-    if (!session?.access_token) return;
-    try {
-      const [cRes, rRes, eRes] = await Promise.all([
-        apiFetch(`/api/contributions?${contribQueryString}`),
-        apiFetch(`/api/receipts?page=1&limit=${PAGE_SIZE}`),
-        apiFetch(`/api/expenses?${expenseQueryString}`)
-      ]);
-      if (cRes.ok) setContribs((await cRes.json()).data ?? []);
-      if (rRes.ok) setReceipts((await rRes.json()).data ?? []);
-      if (eRes.ok) setExpenses((await eRes.json()).data ?? []);
-    } catch (err) {
-      addToast(err.message, "error");
-    }
-  }, [session, contribQueryString, expenseQueryString, addToast]);
+    const qs = params.toString();
+    return qs ? `?${qs}` : "";
+  }, [cFilters]);
 
   const fetchReport = useCallback(async () => {
     if (!session?.access_token) return;
+    setLoadingReport(true);
     try {
-      const res = await apiFetch(`/api/reports/summary${reportQueryString ? `?${reportQueryString}` : ""}`);
+      const res = await apiFetch(`/api/reports/summary${reportQueryString}`);
       const json = await res.json();
-      if (res.ok) setReport(json);
+      if (res.ok) {
+        setReport(json);
+        // build investor dropdown from report contributions_by_investor
+        const options = (json.contributions_by_investor || []).map((c) => ({
+          id: c.investor_id,
+          name: c.investor_name || c.investor_id
+        }));
+        setInvestorOptions(options);
+      } else {
+        addToast(json.error || "Error loading report", "error");
+      }
     } catch (err) {
       addToast(err.message, "error");
+    } finally {
+      setLoadingReport(false);
     }
   }, [session, reportQueryString, addToast]);
 
+  const fetchContribs = useCallback(async () => {
+    if (!session?.access_token) return;
+    setLoadingContribs(true);
+    try {
+      const res = await apiFetch(`/api/contributions?${contribQueryString}`);
+      const json = await res.json();
+      if (res.ok) {
+        setContribs(json.data || []);
+        setContribTotal(json.total || 0);
+      } else {
+        addToast(json.error || "Error loading contributions", "error");
+      }
+    } catch (err) {
+      addToast(err.message, "error");
+    } finally {
+      setLoadingContribs(false);
+    }
+  }, [session, contribQueryString, addToast]);
+
+  const fetchReceipts = useCallback(async () => {
+    if (!session?.access_token) return;
+    try {
+      const res = await apiFetch("/api/receipts");
+      const json = await res.json();
+      if (res.ok) setReceipts(json.data || []);
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  }, [session, addToast]);
+
+  const fetchExpenses = useCallback(async () => {
+    if (!session?.access_token) return;
+    setLoadingExpenses(true);
+    try {
+      const res = await apiFetch(`/api/expenses?${expenseQueryString}`);
+      const json = await res.json();
+      if (res.ok) {
+        setExpenses(json.data || []);
+        setExpenseTotal(json.total || 0);
+      } else {
+        addToast(json.error || "Error loading expenses", "error");
+      }
+    } catch (err) {
+      addToast(err.message, "error");
+    } finally {
+      setLoadingExpenses(false);
+    }
+  }, [session, expenseQueryString, addToast]);
+
   useEffect(() => {
     fetchMe();
-    fetchLists();
     fetchReport();
-  }, [fetchMe, fetchLists, fetchReport]);
+  }, [fetchMe, fetchReport]);
 
+  useEffect(() => {
+    fetchContribs();
+  }, [fetchContribs]);
+
+  useEffect(() => {
+    fetchReceipts();
+  }, [fetchReceipts]);
+
+  useEffect(() => {
+    fetchExpenses();
+  }, [fetchExpenses]);
+
+  // Realtime refresh for receipts/expenses (optional)
   useEffect(() => {
     if (!session?.access_token) return;
     const channel = supabase
       .channel("realtime:receipts_expenses")
       .on("postgres_changes", { event: "*", schema: "public", table: "receipts" }, () => {
-        fetchLists();
-        fetchReport();
+        fetchReceipts();
       })
       .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, () => {
-        fetchLists();
-        fetchReport();
+        fetchExpenses();
       })
       .subscribe();
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session, fetchLists, fetchReport]);
+  }, [session, fetchReceipts, fetchExpenses]);
 
+  // Auth handlers
   const handleLogin = async (e) => {
     e.preventDefault();
     setAuthError("");
@@ -252,7 +297,7 @@ export default function Home() {
     addToast("Logged out");
   };
 
-  // Investor: contribution (GBP)
+  // Actions
   const submitContribution = async (e) => {
     e.preventDefault();
     try {
@@ -266,21 +311,36 @@ export default function Home() {
       setContribAmount("");
       setContribNote("");
       setContribDateSent("");
-      fetchLists();
+      setCPage(1);
+      fetchContribs();
       fetchReport();
     } catch (err) {
       addToast(err.message, "error");
     }
   };
 
-  // Developer: receipt
-  const submitReceipt = async (e) => {
+  const approveContribution = async (id, status) => {
+    try {
+      const res = await apiFetch(`/api/contributions/${id}/status`, {
+        method: "POST",
+        body: JSON.stringify({ status })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error");
+      addToast(`Contribution ${status}`);
+      fetchContribs();
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  };
+
+  const logReceipt = async (e) => {
     e.preventDefault();
     try {
       const res = await apiFetch("/api/receipts", {
         method: "POST",
         body: JSON.stringify({
-          contribution_id: receiptContributionId,
+          contribution_id: selectedContribution,
           kes_received: Number(receiptKes),
           fx_rate: receiptFx ? Number(receiptFx) : null
         })
@@ -288,119 +348,50 @@ export default function Home() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error");
       addToast("Receipt logged");
-      setReceiptContributionId("");
+      setSelectedContribution("");
       setReceiptKes("");
       setReceiptFx("");
-      fetchLists();
+      fetchReceipts();
       fetchReport();
     } catch (err) {
       addToast(err.message, "error");
     }
   };
 
-  // Developer: expense
-  const submitExpense = async (e) => {
-    e.preventDefault();
+  const flagExpense = async () => {
+    if (!selectedExpense) return addToast("Select an expense", "error");
     try {
-      const res = await apiFetch("/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          amount_kes: Number(expenseAmount),
-          category: expenseCategory,
-          expense_date: expenseDate,
-          description: expenseDesc,
-          receipt_url: expenseReceiptUrl || null
-        })
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Error");
-      addToast("Expense logged");
-      setExpenseAmount("");
-      setExpenseCategory("materials");
-      setExpenseDate("");
-      setExpenseDesc("");
-      setExpenseReceiptUrl("");
-      fetchLists();
-      fetchReport();
-    } catch (err) {
-      addToast(err.message, "error");
-    }
-  };
-
-  // Admin: approve receipt
-  const submitApproveReceipt = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await apiFetch(`/api/admin/receipts/${approveReceiptId}/approve`, { method: "POST" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Error");
-      addToast("Receipt approved");
-      setApproveReceiptId("");
-      fetchLists();
-      fetchReport();
-    } catch (err) {
-      addToast(err.message, "error");
-    }
-  };
-
-  // Flag
-  const submitFlag = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await apiFetch(`/api/expenses/${flagExpenseId}/flag`, {
+      const res = await apiFetch(`/api/expenses/${selectedExpense}/flag`, {
         method: "POST",
         body: JSON.stringify({ flagged: true })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error");
       addToast("Expense flagged");
-      setFlagExpenseId("");
-      fetchLists();
-      fetchReport();
+      fetchExpenses();
     } catch (err) {
       addToast(err.message, "error");
     }
   };
 
-  // Comment
-  const submitComment = async (e) => {
-    e.preventDefault();
+  const commentExpense = async () => {
+    if (!selectedExpense) return addToast("Select an expense", "error");
+    if (!commentText.trim()) return addToast("Enter a comment", "error");
     try {
-      const res = await apiFetch(`/api/expenses/${commentExpenseId}/comments`, {
+      const res = await apiFetch(`/api/expenses/${selectedExpense}/comments`, {
         method: "POST",
-        body: JSON.stringify({ comment: commentText })
+        body: JSON.stringify({ comment: commentText.trim() })
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error");
       addToast("Comment added");
-      setCommentExpenseId("");
       setCommentText("");
     } catch (err) {
       addToast(err.message, "error");
     }
   };
 
-  // Upload receipt
-  const submitUpload = async (e) => {
-    e.preventDefault();
-    if (!uploadFile) {
-      addToast("Select a file", "error");
-      return;
-    }
-    const formData = new FormData();
-    formData.append("file", uploadFile);
-    try {
-      const res = await apiFetch("/api/uploads/receipt", { method: "POST", body: formData });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Upload error");
-      addToast("Uploaded");
-      setUploadFile(null);
-    } catch (err) {
-      addToast(err.message, "error");
-    }
-  };
-
-  // Exports
+  // Exports (used in Reports tab)
   const downloadFile = async (path, filename, mime) => {
     try {
       const res = await apiFetch(path);
@@ -419,45 +410,39 @@ export default function Home() {
   };
 
   const role = me?.role;
+  const isAdmin = role === "admin";
+  const isDev = role === "developer";
+  const isInv = role === "investor";
 
-  const primaryActions = [];
-  if (role === "investor" || role === "admin") {
-    primaryActions.push({
-      label: "Add Contribution",
-      onClick: () => document.getElementById("contrib-form")?.scrollIntoView({ behavior: "smooth" })
-    });
-  }
-  if (role === "developer" || role === "admin") {
-    primaryActions.push({
-      label: "Log Expense",
-      onClick: () => document.getElementById("expense-form")?.scrollIntoView({ behavior: "smooth" })
-    });
-  }
-  if (role === "admin") {
-    primaryActions.push({
-      label: "Approve Receipt",
-      onClick: () => document.getElementById("approve-form")?.scrollIntoView({ behavior: "smooth" })
-    });
-  }
+  const contribPages = Math.max(1, Math.ceil(contribTotal / PAGE_SIZE));
+  const expensePages = Math.max(1, Math.ceil(expenseTotal / PAGE_SIZE));
+
+  const visibleContribs = useMemo(() => contribs || [], [contribs]);
+  const approvedContribs = useMemo(() => visibleContribs.filter((c) => c.status === "approved"), [visibleContribs]);
 
   return (
-    <div className="space-y-6 pb-24">
+    <div className="space-y-6 pb-10">
       <Toasts toasts={toasts} remove={removeToast} />
 
       {/* Header */}
       <header className="section">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-sm uppercase tracking-[0.2em] text-ink/60">Building Project Financials</p>
+            <p className="text-sm uppercase tracking-[0.2em] text-ink/60">Investor & Project Portal</p>
             <h1 className="text-3xl font-bold text-ink">Control Center</h1>
-            <p className="subtle">Kenyan project · Investors · Developers · Admin</p>
+            <p className="subtle">Investors can view/filter contributions and expenses. Developers/Admin can approve and log receipts.</p>
           </div>
           <div className="flex flex-col items-start gap-2 md:items-end w-full sm:w-auto">
             <span className="badge">{apiStatus}</span>
             {session ? (
-              <div className="text-right w-full sm:w-auto">
-                <p className="text-sm text-ink/80 break-words">{session.user.email}</p>
-                <button className="btn-ghost mt-2 w-full sm:w-auto" onClick={handleLogout}>
+              <div className="glass px-4 py-3 border border-white/60 w-full sm:w-80 text-left">
+                <div className="text-sm font-semibold text-ink">{me?.full_name || session.user.email}</div>
+                <div className="text-xs text-ink/70 break-words">{session.user.email}</div>
+                <div className="text-xs text-ink/70">Role: {me?.role || "—"}</div>
+                <div className="text-xs text-ink/60">
+                  Last login: {me?.last_sign_in_at ? new Date(me.last_sign_in_at).toLocaleString() : "—"}
+                </div>
+                <button className="btn-ghost mt-2 w-full" onClick={handleLogout}>
                   Logout
                 </button>
               </div>
@@ -470,350 +455,482 @@ export default function Home() {
                   Sign In
                 </button>
                 {authError && <span className="text-sm text-red-600">{authError}</span>}
-                <p className="text-xs text-ink/60">
-                  Forgot password? <a className="text-ink underline" href="/auth/reset">Reset here</a>
-                </p>
               </form>
             )}
           </div>
         </div>
       </header>
 
-      {/* Session & Reports */}
-      <section className="section">
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div>
-            <h2 className="heading">Session & Role</h2>
-            {me ? (
-              <pre className="bg-white/80 rounded-xl p-4 border border-white/60 text-sm overflow-x-auto">
-{JSON.stringify(me, null, 2)}
-              </pre>
-            ) : (
-              <p className="subtle">Not loaded.</p>
-            )}
-          </div>
-          <div>
-            <h2 className="heading">Reports (Summary)</h2>
-            {report ? (
-              <div className="space-y-3 text-sm">
-                <div className="glass p-3">
-                  <div className="font-semibold">Balances</div>
-                  <div>Total Received (KES): {report.balances?.total_received_kes ?? "-"}</div>
-                  <div>Total Contributions (GBP): {report.balances?.total_contributions_gbp ?? "-"}</div>
-                  <div>Total Expenses (KES): {report.balances?.total_expenses_kes ?? "-"}</div>
-                  <div>Balance (KES): {report.balances?.balance_kes ?? "-"}</div>
-                </div>
-                <div className="glass p-3">
-                  <div className="font-semibold">Contributions by Investor</div>
-                  <ul className="list-disc list-inside">
-                    {(report.contributions_by_investor || []).map((c) => (
-                      <li key={c.investor_id}>{c.investor_name || c.investor_id} — GBP {c.total_gbp}</li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="glass p-3">
-                  <div className="font-semibold">Expenses by Category</div>
-                  <ul className="list-disc list-inside">
-                    {(report.expenses_by_category || []).map((e, i) => (
-                      <li key={i}>{e.category}: KES {e.total_kes}</li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="glass p-3">
-                  <div className="font-semibold">Monthly Cashflow</div>
-                  <ul className="list-disc list-inside">
-                    {(report.monthly_cashflow || []).map((m, i) => (
-                      <li key={i}>
-                        {m.month}: inflow {m.inflow_kes}, outflow {m.outflow_kes}, net {m.net_kes}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            ) : (
-              <p className="subtle">No report data yet.</p>
-            )}
-          </div>
-        </div>
-      </section>
-
-      {/* Lists */}
-      <section className="grid gap-6 lg:grid-cols-3">
-        <div className="section">
-          <h3 className="heading">Contributions</h3>
-          <pre className="bg-white/80 rounded-xl p-3 border border-white/60 text-xs max-h-64 overflow-auto">
-{JSON.stringify(contribs, null, 2)}
-          </pre>
-        </div>
-        <div className="section">
-          <h3 className="heading">Receipts</h3>
-          <pre className="bg-white/80 rounded-xl p-3 border border-white/60 text-xs max-h-64 overflow-auto">
-{JSON.stringify(receipts, null, 2)}
-          </pre>
-        </div>
-        <div className="section">
-          <h3 className="heading">Expenses</h3>
-          <pre className="bg-white/80 rounded-xl p-3 border border-white/60 text-xs max-h-64 overflow-auto">
-{JSON.stringify(expenses, null, 2)}
-          </pre>
-        </div>
-      </section>
-
-      {/* Forms */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        {(role === "investor" || role === "admin") && (
-          <section className="section" id="contrib-form">
-            <h3 className="heading">Investor: Create Contribution (GBP)</h3>
-            <form onSubmit={submitContribution} className="space-y-3">
-              <div>
-                <label className="label">GBP amount</label>
-                <input
-                  className="input"
-                  type="number"
-                  step="0.01"
-                  placeholder="1000.00"
-                  value={contribAmount}
-                  onChange={(e) => setContribAmount(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="label">Date sent</label>
-                <input className="input" type="date" value={contribDateSent} onChange={(e) => setContribDateSent(e.target.value)} required />
-              </div>
-              <div>
-                <label className="label">Note (optional)</label>
-                <textarea className="input h-24" placeholder="Description or reference" value={contribNote} onChange={(e) => setContribNote(e.target.value)} />
-              </div>
-              <button className="btn-primary" type="submit">
-                Create Contribution
-              </button>
-            </form>
-          </section>
-        )}
-
-        {(role === "developer" || role === "admin") && (
-          <section className="section">
-            <h3 className="heading">Developer: Confirm Receipt (KES)</h3>
-            <form onSubmit={submitReceipt} className="space-y-3">
-              <div>
-                <label className="label">Contribution ID</label>
-                <input
-                  className="input"
-                  type="text"
-                  placeholder="uuid"
-                  value={receiptContributionId}
-                  onChange={(e) => setReceiptContributionId(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="label">KES received</label>
-                <input
-                  className="input"
-                  type="number"
-                  step="0.01"
-                  placeholder="100000"
-                  value={receiptKes}
-                  onChange={(e) => setReceiptKes(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="label">FX rate (optional)</label>
-                <input
-                  className="input"
-                  type="number"
-                  step="0.000001"
-                  placeholder="160.123456"
-                  value={receiptFx}
-                  onChange={(e) => setReceiptFx(e.target.value)}
-                />
-              </div>
-              <button className="btn-primary" type="submit">
-                Log Receipt
-              </button>
-            </form>
-          </section>
-        )}
+      {/* Tabs */}
+      <div className="section flex gap-2 flex-wrap">
+        {["dashboard", "contributions", "expenses", "reports"].map((t) => (
+          <button key={t} className={`tab ${tab === t ? "tab-active" : ""}`} onClick={() => setTab(t)}>
+            {t[0].toUpperCase() + t.slice(1)}
+          </button>
+        ))}
       </div>
 
-      {(role === "developer" || role === "admin") && (
-        <section className="section" id="expense-form">
-          <h3 className="heading">Developer: Log Expense</h3>
-          <form onSubmit={submitExpense} className="grid gap-4 md:grid-cols-2">
+      {/* Dashboard */}
+      {tab === "dashboard" && (
+        <section className="section">
+          <h3 className="heading">Overview</h3>
+          {loadingReport ? (
+            <div className="skeleton h-32 w-full" />
+          ) : report ? (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="glass p-4">
+                <p className="subtle">Developer Balance</p>
+                <p className="text-2xl font-bold">KES {report.balances?.balance_kes ?? "-"}</p>
+              </div>
+              <div className="glass p-4">
+                <p className="subtle">Total Contributions (GBP)</p>
+                <p className="text-2xl font-bold">£ {report.balances?.total_contributions_gbp ?? "-"}</p>
+              </div>
+              <div className="glass p-4">
+                <p className="subtle">Total Received (KES)</p>
+                <p className="text-2xl font-bold">KES {report.balances?.total_received_kes ?? "-"}</p>
+              </div>
+              <div className="glass p-4">
+                <p className="subtle">Total Expenses (KES)</p>
+                <p className="text-2xl font-bold">KES {report.balances?.total_expenses_kes ?? "-"}</p>
+              </div>
+            </div>
+          ) : (
+            <p className="subtle">No data yet.</p>
+          )}
+        </section>
+      )}
+
+      {/* Contributions */}
+      {tab === "contributions" && (
+        <section className="section space-y-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
             <div>
-              <label className="label">Amount (KES)</label>
+              <h3 className="heading">Contributions</h3>
+              <p className="subtle">Investors can filter by investor name, status, and date.</p>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              <button
+                className="btn-ghost"
+                onClick={() => {
+                  setCFilters({ startDate: "", endDate: "", status: "", investor_id: "" });
+                  setCPage(1);
+                  fetchContribs();
+                }}
+              >
+                Clear Filters
+              </button>
+            </div>
+          </div>
+
+          {/* Filters */}
+          <div className="grid gap-3 md:grid-cols-5">
+            <div>
+              <label className="label">Start date</label>
               <input
                 className="input"
-                type="number"
-                step="0.01"
-                placeholder="5000"
-                value={expenseAmount}
-                onChange={(e) => setExpenseAmount(e.target.value)}
-                required
+                type="date"
+                value={cFilters.startDate}
+                onChange={(e) => setCFilters((f) => ({ ...f, startDate: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="label">End date</label>
+              <input
+                className="input"
+                type="date"
+                value={cFilters.endDate}
+                onChange={(e) => setCFilters((f) => ({ ...f, endDate: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="label">Status</label>
+              <select
+                className="input"
+                value={cFilters.status}
+                onChange={(e) => setCFilters((f) => ({ ...f, status: e.target.value }))}
+              >
+                {statusOptions.map((s) => (
+                  <option key={s.value} value={s.value}>
+                    {s.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="md:col-span-2">
+              <label className="label">Investor</label>
+              <select
+                className="input"
+                value={cFilters.investor_id}
+                onChange={(e) => setCFilters((f) => ({ ...f, investor_id: e.target.value }))}
+              >
+                <option value="">All investors</option>
+                {investorOptions.map((inv) => (
+                  <option key={inv.id} value={inv.id}>
+                    {inv.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Contribution form (Investors/Admin) */}
+          {(isInv || isAdmin) && (
+            <div className="glass p-4 rounded-xl border border-white/60">
+              <h4 className="text-lg font-semibold text-ink mb-2">Add Contribution (GBP)</h4>
+              <form onSubmit={submitContribution} className="grid gap-3 md:grid-cols-3">
+                <div className="md:col-span-1">
+                  <label className="label">GBP amount</label>
+                  <input
+                    className="input"
+                    type="number"
+                    step="0.01"
+                    placeholder="1000.00"
+                    value={contribAmount}
+                    onChange={(e) => setContribAmount(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="label">Date sent</label>
+                  <input
+                    className="input"
+                    type="date"
+                    value={contribDateSent}
+                    onChange={(e) => setContribDateSent(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="label">Note (optional)</label>
+                  <input
+                    className="input"
+                    type="text"
+                    placeholder="Reference"
+                    value={contribNote}
+                    onChange={(e) => setContribNote(e.target.value)}
+                  />
+                </div>
+                <div className="md:col-span-3">
+                  <button className="btn-primary" type="submit">
+                    Create Contribution
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+
+          {/* Contribution cards */}
+          {loadingContribs ? (
+            <div className="skeleton h-32 w-full" />
+          ) : visibleContribs.length === 0 ? (
+            <p className="subtle">No contributions found.</p>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              {visibleContribs.map((c) => (
+                <div key={c.id} className="glass p-4 border border-white/60 space-y-2">
+                  <div className="flex justify-between">
+                    <div>
+                      <div className="font-semibold text-ink">GBP {Number(c.gbp_amount).toLocaleString()}</div>
+                      <div className="text-xs text-ink/70">Created: {formatDate(c.created_at)}</div>
+                      <div className="text-xs text-ink/70">Date sent: {c.date_sent || "—"}</div>
+                    </div>
+                    <span className="badge capitalize">{c.status}</span>
+                  </div>
+                  <div className="text-sm text-ink/80">Investor: {c.investor_id}</div>
+                  <div className="text-sm text-ink/70 break-words">Note: {c.note || "—"}</div>
+
+                  {(isDev || isAdmin) && c.status === "pending" && (
+                    <div className="flex gap-2">
+                      <button className="btn-primary w-full" onClick={() => approveContribution(c.id, "approved")}>
+                        Approve
+                      </button>
+                      <button className="btn-ghost w-full" onClick={() => approveContribution(c.id, "rejected")}>
+                        Reject
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Pagination */}
+          <div className="flex items-center gap-3">
+            <button className="btn-ghost" disabled={cPage <= 1} onClick={() => setCPage((p) => Math.max(1, p - 1))}>
+              Prev
+            </button>
+            <span className="text-sm text-ink/70">
+              Page {cPage} / {contribPages}
+            </span>
+            <button
+              className="btn-ghost"
+              disabled={cPage >= contribPages}
+              onClick={() => setCPage((p) => Math.min(contribPages, p + 1))}
+            >
+              Next
+            </button>
+          </div>
+
+          {/* Developer/Admin: log receipt against approved contribution */}
+          {(isDev || isAdmin) && (
+            <div className="glass p-4 border border-white/60 space-y-3">
+              <h4 className="text-lg font-semibold text-ink">Log Receipt (select approved contribution)</h4>
+              <form onSubmit={logReceipt} className="grid gap-3 md:grid-cols-3">
+                <div className="md:col-span-2">
+                  <label className="label">Contribution</label>
+                  <select
+                    className="input"
+                    value={selectedContribution}
+                    onChange={(e) => setSelectedContribution(e.target.value)}
+                    required
+                  >
+                    <option value="">Select approved contribution</option>
+                    {approvedContribs.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.id} — GBP {c.gbp_amount} — {c.note || "no note"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="label">KES received</label>
+                  <input
+                    className="input"
+                    type="number"
+                    step="0.01"
+                    value={receiptKes}
+                    onChange={(e) => setReceiptKes(e.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="label">FX rate (optional)</label>
+                  <input
+                    className="input"
+                    type="number"
+                    step="0.000001"
+                    value={receiptFx}
+                    onChange={(e) => setReceiptFx(e.target.value)}
+                  />
+                </div>
+                <div className="md:col-span-3">
+                  <button className="btn-primary" type="submit">
+                    Log Receipt
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* Expenses */}
+      {tab === "expenses" && (
+        <section className="section space-y-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h3 className="heading">Expenses</h3>
+              <p className="subtle">Investors can view, flag, and comment. Filters and pagination included.</p>
+            </div>
+            <button
+              className="btn-ghost"
+              onClick={() => {
+                setEFilters({ startDate: "", endDate: "", status: "", category: "" });
+                setEPage(1);
+                fetchExpenses();
+              }}
+            >
+              Clear Filters
+            </button>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-4">
+            <div>
+              <label className="label">Start date</label>
+              <input
+                className="input"
+                type="date"
+                value={eFilters.startDate}
+                onChange={(e) => setEFilters((f) => ({ ...f, startDate: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="label">End date</label>
+              <input
+                className="input"
+                type="date"
+                value={eFilters.endDate}
+                onChange={(e) => setEFilters((f) => ({ ...f, endDate: e.target.value }))}
               />
             </div>
             <div>
               <label className="label">Category</label>
-              <select className="input" value={expenseCategory} onChange={(e) => setExpenseCategory(e.target.value)}>
+              <select
+                className="input"
+                value={eFilters.category}
+                onChange={(e) => setEFilters((f) => ({ ...f, category: e.target.value }))}
+              >
+                <option value="">Any</option>
                 <option value="materials">materials</option>
                 <option value="labour">labour</option>
                 <option value="other">other</option>
               </select>
             </div>
             <div>
-              <label className="label">Expense date</label>
-              <input className="input" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} required />
-            </div>
-            <div>
-              <label className="label">Receipt URL (optional)</label>
-              <input
+              <label className="label">Status</label>
+              <select
                 className="input"
-                type="url"
-                placeholder="https://..."
-                value={expenseReceiptUrl}
-                onChange={(e) => setExpenseReceiptUrl(e.target.value)}
-              />
+                value={eFilters.status}
+                onChange={(e) => setEFilters((f) => ({ ...f, status: e.target.value }))}
+              >
+                <option value="">Any</option>
+                <option value="flagged">Flagged</option>
+                <option value="unflagged">Unflagged</option>
+              </select>
             </div>
-            <div className="md:col-span-2">
-              <label className="label">Description</label>
-              <textarea
-                className="input h-24"
-                placeholder="What was this expense for?"
-                value={expenseDesc}
-                onChange={(e) => setExpenseDesc(e.target.value)}
-              />
-            </div>
-            <div className="md:col-span-2 flex items-center gap-3 flex-wrap">
-              <button className="btn-primary" type="submit">
-                Log Expense
-              </button>
-            </div>
-          </form>
-        </section>
-      )}
-
-      {(role === "developer" || role === "admin") && (
-        <section className="section">
-          <h3 className="heading">Developer: Upload Receipt</h3>
-          <form onSubmit={submitUpload} className="flex flex-col gap-3 max-w-md">
-            <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} className="input" />
-            <button className="btn-primary" type="submit">
-              Upload
-            </button>
-          </form>
-        </section>
-      )}
-
-      {role === "admin" && (
-        <section className="section" id="approve-form">
-          <h3 className="heading">Admin: Approve Receipt</h3>
-          <form onSubmit={submitApproveReceipt} className="flex flex-col gap-3 max-w-md">
-            <input
-              className="input"
-              type="text"
-              placeholder="receipt_id"
-              value={approveReceiptId}
-              onChange={(e) => setApproveReceiptId(e.target.value)}
-              required
-            />
-            <button className="btn-primary" type="submit">
-              Approve Receipt
-            </button>
-          </form>
-        </section>
-      )}
-
-      {(role === "investor" || role === "admin") && (
-        <section className="section">
-          <h3 className="heading">Flags & Comments</h3>
-          <div className="grid gap-4 md:grid-cols-2">
-            <form onSubmit={submitFlag} className="flex flex-col gap-3 glass p-4">
-              <div>
-                <label className="label">Expense ID to flag</label>
-                <input
-                  className="input"
-                  type="text"
-                  placeholder="expense_id"
-                  value={flagExpenseId}
-                  onChange={(e) => setFlagExpenseId(e.target.value)}
-                  required
-                />
-              </div>
-              <button className="btn-primary" type="submit">
-                Flag Expense
-              </button>
-            </form>
-
-            <form onSubmit={submitComment} className="flex flex-col gap-3 glass p-4">
-              <div>
-                <label className="label">Expense ID to comment</label>
-                <input
-                  className="input"
-                  type="text"
-                  placeholder="expense_id"
-                  value={commentExpenseId}
-                  onChange={(e) => setCommentExpenseId(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="label">Comment</label>
-                <textarea
-                  className="input h-20"
-                  placeholder="Add your note"
-                  value={commentText}
-                  onChange={(e) => setCommentText(e.target.value)}
-                  required
-                />
-              </div>
-              <button className="btn-primary" type="submit">
-                Add Comment
-              </button>
-            </form>
           </div>
-        </section>
-      )}
 
-      {role === "admin" && (
-        <section className="section">
-          <h3 className="heading">Admin: Lock / Soft-delete</h3>
-          <p className="subtle mb-2">Table: contributions | receipts | expenses | expense_comments</p>
-          <AdminLockDeleteForm toast={addToast} />
-        </section>
-      )}
+          {loadingExpenses ? (
+            <div className="skeleton h-32 w-full" />
+          ) : expenses.length === 0 ? (
+            <p className="subtle">No expenses found.</p>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              {expenses.map((ex) => (
+                <div
+                  key={ex.id}
+                  className={`glass p-4 border ${selectedExpense === ex.id ? "border-ink" : "border-white/60"} space-y-2 cursor-pointer`}
+                  onClick={() => setSelectedExpense(ex.id)}
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="font-semibold text-ink">KES {Number(ex.amount_kes).toLocaleString()}</div>
+                      <div className="text-xs text-ink/70">Date: {ex.expense_date}</div>
+                      <div className="text-xs text-ink/70 capitalize">Category: {ex.category}</div>
+                    </div>
+                    {ex.flagged && <span className="badge">Flagged</span>}
+                  </div>
+                  <div className="text-sm text-ink/80">{ex.description || "—"}</div>
+                  {ex.receipt_url && (
+                    <a className="text-xs text-ink underline" href={ex.receipt_url} target="_blank" rel="noreferrer">
+                      Receipt
+                    </a>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
-      {role === "admin" && (
-        <section className="section">
-          <h3 className="heading">Exports</h3>
-          <div className="flex flex-wrap gap-3">
-            <button className="btn-primary" type="button" onClick={() => downloadFile("/api/export/pdf", "financials.pdf", "application/pdf")}>
-              Download PDF
+          <div className="flex items-center gap-3">
+            <button className="btn-ghost" disabled={ePage <= 1} onClick={() => setEPage((p) => Math.max(1, p - 1))}>
+              Prev
             </button>
+            <span className="text-sm text-ink/70">
+              Page {ePage} / {expensePages}
+            </span>
             <button
-              className="btn-primary"
-              type="button"
-              onClick={() =>
-                downloadFile("/api/export/excel", "financials.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-              }
+              className="btn-ghost"
+              disabled={ePage >= expensePages}
+              onClick={() => setEPage((p) => Math.min(expensePages, p + 1))}
             >
-              Download Excel
+              Next
             </button>
           </div>
+
+          {/* Flag / Comment actions */}
+          {isInv || isAdmin ? (
+            <div className="glass p-4 border border-white/60 space-y-3">
+              <div className="text-sm text-ink/80">
+                Selected expense: {selectedExpense || "None"} (click a card above to select)
+              </div>
+              <div className="flex flex-col md:flex-row gap-3">
+                <button className="btn-primary w-full md:w-auto" onClick={flagExpense} disabled={!selectedExpense}>
+                  Flag Expense
+                </button>
+                <div className="flex flex-col gap-2 w-full md:w-auto flex-1">
+                  <textarea
+                    className="input h-20"
+                    placeholder="Add a comment"
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                  />
+                  <button className="btn-ghost w-full md:w-auto" onClick={commentExpense} disabled={!selectedExpense}>
+                    Add Comment
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </section>
       )}
 
-      {primaryActions.length > 0 && (
-        <div className="sticky-bar">
-          <div className="sticky-bar-inner">
-            {primaryActions.map((a, idx) => (
-              <button key={idx} className="btn-primary w-full" type="button" onClick={a.onClick}>
-                {a.label}
-              </button>
-            ))}
-          </div>
-        </div>
+      {/* Reports */}
+      {tab === "reports" && (
+        <section className="section">
+          <h3 className="heading">Reports</h3>
+          {loadingReport ? (
+            <div className="skeleton h-32 w-full" />
+          ) : report ? (
+            <div className="space-y-3 text-sm">
+              <div className="glass p-3">
+                <div className="font-semibold">Balances</div>
+                <div>Total Received (KES): {report.balances?.total_received_kes ?? "-"}</div>
+                <div>Total Contributions (GBP): {report.balances?.total_contributions_gbp ?? "-"}</div>
+                <div>Total Expenses (KES): {report.balances?.total_expenses_kes ?? "-"}</div>
+                <div>Balance (KES): {report.balances?.balance_kes ?? "-"}</div>
+              </div>
+              <div className="glass p-3">
+                <div className="font-semibold">Contributions by Investor</div>
+                <ul className="list-disc list-inside">
+                  {(report.contributions_by_investor || []).map((c) => (
+                    <li key={c.investor_id}>{c.investor_name || c.investor_id} — GBP {c.total_gbp}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="glass p-3">
+                <div className="font-semibold">Expenses by Category</div>
+                <ul className="list-disc list-inside">
+                  {(report.expenses_by_category || []).map((e, i) => (
+                    <li key={i}>{e.category}: KES {e.total_kes}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="glass p-3">
+                <div className="font-semibold">Monthly Cashflow</div>
+                <ul className="list-disc list-inside">
+                  {(report.monthly_cashflow || []).map((m, i) => (
+                    <li key={i}>
+                      {m.month}: inflow {m.inflow_kes}, outflow {m.outflow_kes}, net {m.net_kes}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              {isAdmin && (
+                <div className="flex gap-3 flex-wrap">
+                  <button className="btn-primary" type="button" onClick={() => downloadFile("/api/export/pdf", "financials.pdf", "application/pdf")}>
+                    Download PDF
+                  </button>
+                  <button
+                    className="btn-primary"
+                    type="button"
+                    onClick={() =>
+                      downloadFile(
+                        "/api/export/excel",
+                        "financials.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      )
+                    }
+                  >
+                    Download Excel
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="subtle">No report data yet.</p>
+          )}
+        </section>
       )}
     </div>
   );
