@@ -1,17 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
-import { supabase } from "@/lib/supabaseClient";
-import { api } from "@/lib/apiClient";
-
-const PAGE_SIZE = 10;
-const defaultDateRange = () => {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(end.getDate() - 29);
-  const fmt = (d) => d.toISOString().slice(0, 10);
-  return { start: fmt(start), end: fmt(end) };
-};
+import { useEffect, useState, useCallback } from "react";
+import { supabase } from "../lib/supabaseClient";
+import { apiFetch } from "../lib/apiClient";
 
 function Toasts({ toasts, remove }) {
   return (
@@ -29,6 +20,7 @@ function Toasts({ toasts, remove }) {
     </div>
   );
 }
+
 function useToasts() {
   const [toasts, setToasts] = useState([]);
   const add = (message, type = "success") => {
@@ -40,61 +32,57 @@ function useToasts() {
   return { toasts, add, remove };
 }
 
-function Pagination({ page, totalPages, onPage }) {
-  if (totalPages <= 1) return null;
+function AdminLockDeleteForm({ apiBase, session, toast }) {
+  const [table, setTable] = useState("contributions");
+  const [rowId, setRowId] = useState("");
+  const doCall = async (path) => {
+    try {
+      const res = await apiFetch(path, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error");
+      toast("Done");
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  };
   return (
-    <div className="flex items-center gap-2 mt-3">
-      <button className="btn-ghost" disabled={page <= 1} onClick={() => onPage(page - 1)}>
-        Prev
-      </button>
-      <span className="text-sm text-ink/70">
-        Page {page} / {totalPages}
-      </span>
-      <button className="btn-ghost" disabled={page >= totalPages} onClick={() => onPage(page + 1)}>
-        Next
-      </button>
+    <div className="glass p-4 flex flex-col gap-2 max-w-md">
+      <select className="input" value={table} onChange={(e) => setTable(e.target.value)}>
+        <option value="contributions">contributions</option>
+        <option value="receipts">receipts</option>
+        <option value="expenses">expenses</option>
+        <option value="expense_comments">expense_comments</option>
+      </select>
+      <input className="input" type="text" placeholder="row id" value={rowId} onChange={(e) => setRowId(e.target.value)} />
+      <div className="flex gap-2 flex-wrap">
+        <button className="btn-primary" type="button" onClick={() => doCall(`/api/admin/${table}/${rowId}/lock`)}>
+          Lock
+        </button>
+        <button className="btn-ghost" type="button" onClick={() => doCall(`/api/admin/${table}/${rowId}/soft-delete`)}>
+          Soft-delete
+        </button>
+      </div>
     </div>
   );
 }
 
-function SectionSkeleton() {
-  return <div className="skeleton h-32 w-full" />;
-}
-
 export default function Home() {
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE || "https://building-financials-backend.onrender.com";
   const { toasts, add: addToast, remove: removeToast } = useToasts();
-  const [tab, setTab] = useState("dashboard");
+
   const [apiStatus, setApiStatus] = useState("Checking...");
   const [session, setSession] = useState(null);
   const [me, setMe] = useState(null);
   const [authError, setAuthError] = useState("");
+
+  // Auth form
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loadingMe, setLoadingMe] = useState(false);
 
-  // Filters & pagination
-  const [filters, setFilters] = useState(() => {
-    const { start, end } = defaultDateRange();
-    return { startDate: start, endDate: end, status: "", category: "" };
-  });
-  const [pageState, setPageState] = useState({
-    contributions: 1,
-    receipts: 1,
-    expenses: 1,
-  });
-
-  // Data
-  const [contribs, setContribs] = useState([]);
-  const [receipts, setReceipts] = useState([]);
-  const [expenses, setExpenses] = useState([]);
-  const [counts, setCounts] = useState({ contributions: 0, receipts: 0, expenses: 0 });
-  const [report, setReport] = useState(null);
-  const [loadingLists, setLoadingLists] = useState(false);
-  const [loadingReport, setLoadingReport] = useState(false);
-
-  // Forms
+  // Forms state
   const [contribAmount, setContribAmount] = useState("");
   const [contribNote, setContribNote] = useState("");
+  const [contribDateSent, setContribDateSent] = useState("");
   const [receiptContributionId, setReceiptContributionId] = useState("");
   const [receiptKes, setReceiptKes] = useState("");
   const [receiptFx, setReceiptFx] = useState("");
@@ -104,31 +92,34 @@ export default function Home() {
   const [expenseDesc, setExpenseDesc] = useState("");
   const [expenseReceiptUrl, setExpenseReceiptUrl] = useState("");
   const [approveReceiptId, setApproveReceiptId] = useState("");
-  const [commentModal, setCommentModal] = useState({ open: false, expenseId: "", text: "" });
-  const [flagModal, setFlagModal] = useState({ open: false, expenseId: "" });
+  const [flagExpenseId, setFlagExpenseId] = useState("");
+  const [commentExpenseId, setCommentExpenseId] = useState("");
+  const [commentText, setCommentText] = useState("");
   const [uploadFile, setUploadFile] = useState(null);
 
-  const role = me?.role;
-  const isAdmin = role === "admin";
-  const isInvestor = role === "investor";
-  const isDev = role === "developer";
+  // Lists
+  const [contribs, setContribs] = useState([]);
+  const [receipts, setReceipts] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+
+  // Reports
+  const [report, setReport] = useState(null);
 
   // Health
   useEffect(() => {
     const check = async () => {
       try {
-        const res = await fetch("/health");
-        const ok = res.ok;
-        const json = ok ? await res.json() : {};
-        setApiStatus(ok ? `API OK${json.audit_mode ? " (audit mode)" : ""}` : "API error");
+        const res = await fetch(`${apiBase}/health`);
+        const json = await res.json();
+        setApiStatus(json.ok ? `API OK${json.audit_mode ? " (audit mode)" : ""}` : `API error: ${json.error}`);
       } catch (err) {
         setApiStatus(`API unreachable: ${err.message}`);
       }
     };
     check();
-  }, []);
+  }, [apiBase]);
 
-  // Session listener
+  // Session
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
     const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => setSession(sess));
@@ -140,61 +131,42 @@ export default function Home() {
       setMe(null);
       return;
     }
-    setLoadingMe(true);
     try {
-      const data = await api.get("/api/me");
-      setMe(data);
+      const res = await apiFetch("/api/me");
+      const json = await res.json();
+      if (res.ok) setMe(json);
+      else setMe({ error: json.error });
     } catch (err) {
       setMe({ error: err.message });
-    } finally {
-      setLoadingMe(false);
     }
   }, [session]);
 
   const fetchLists = useCallback(async () => {
     if (!session?.access_token) return;
-    setLoadingLists(true);
     try {
-      const qs = (pageKey) =>
-        `?page=${pageState[pageKey]}&limit=${PAGE_SIZE}` +
-        (filters.startDate ? `&startDate=${filters.startDate}` : "") +
-        (filters.endDate ? `&endDate=${filters.endDate}` : "") +
-        (filters.status ? `&status=${filters.status}` : "") +
-        (filters.category ? `&category=${filters.category}` : "");
-      const [c, r, e] = await Promise.all([
-        api.get(`/api/contributions${qs("contributions")}`),
-        api.get(`/api/receipts${qs("receipts")}`),
-        api.get(`/api/expenses${qs("expenses")}`),
+      const [cRes, rRes, eRes] = await Promise.all([
+        apiFetch("/api/contributions"),
+        apiFetch("/api/receipts"),
+        apiFetch("/api/expenses")
       ]);
-      setContribs(c.data || []);
-      setReceipts(r.data || []);
-      setExpenses(e.data || []);
-      setCounts({
-        contributions: c.total || 0,
-        receipts: r.total || 0,
-        expenses: e.total || 0,
-      });
+      if (cRes.ok) setContribs(await cRes.json());
+      if (rRes.ok) setReceipts(await rRes.json());
+      if (eRes.ok) setExpenses(await eRes.json());
     } catch (err) {
       addToast(err.message, "error");
-    } finally {
-      setLoadingLists(false);
     }
-  }, [session, filters, pageState, addToast]);
+  }, [session, addToast]);
 
   const fetchReport = useCallback(async () => {
     if (!session?.access_token) return;
-    setLoadingReport(true);
     try {
-      const qs =
-        `?startDate=${filters.startDate || ""}&endDate=${filters.endDate || ""}&scope=all`;
-      const data = await api.get(`/api/reports/summary${qs}`);
-      setReport(data);
+      const res = await apiFetch("/api/reports/summary");
+      const json = await res.json();
+      if (res.ok) setReport(json);
     } catch (err) {
       addToast(err.message, "error");
-    } finally {
-      setLoadingReport(false);
     }
-  }, [session, filters, addToast]);
+  }, [session, addToast]);
 
   useEffect(() => {
     fetchMe();
@@ -202,7 +174,7 @@ export default function Home() {
     fetchReport();
   }, [fetchMe, fetchLists, fetchReport]);
 
-  // Realtime refresh (receipts/expenses)
+  // Realtime refresh (only if supabase realtime is configured for these tables)
   useEffect(() => {
     if (!session?.access_token) return;
     const channel = supabase
@@ -240,28 +212,41 @@ export default function Home() {
     addToast("Logged out");
   };
 
-  // Forms
+  // Investor: contribution (GBP)
   const submitContribution = async (e) => {
     e.preventDefault();
     try {
-      await api.post("/api/contributions", { gbp_amount: Number(contribAmount), note: contribNote });
+      const res = await apiFetch("/api/contributions", {
+        method: "POST",
+        body: JSON.stringify({ gbp_amount: Number(contribAmount), note: contribNote, date_sent: contribDateSent })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error");
       addToast("Contribution created");
       setContribAmount("");
       setContribNote("");
+      setContribDateSent("");
       fetchLists();
       fetchReport();
     } catch (err) {
       addToast(err.message, "error");
     }
   };
+
+  // Developer: receipt
   const submitReceipt = async (e) => {
     e.preventDefault();
     try {
-      await api.post("/api/receipts", {
-        contribution_id: receiptContributionId,
-        kes_received: Number(receiptKes),
-        fx_rate: receiptFx ? Number(receiptFx) : null,
+      const res = await apiFetch("/api/receipts", {
+        method: "POST",
+        body: JSON.stringify({
+          contribution_id: receiptContributionId,
+          kes_received: Number(receiptKes),
+          fx_rate: receiptFx ? Number(receiptFx) : null
+        })
       });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error");
       addToast("Receipt logged");
       setReceiptContributionId("");
       setReceiptKes("");
@@ -272,16 +257,23 @@ export default function Home() {
       addToast(err.message, "error");
     }
   };
+
+  // Developer: expense
   const submitExpense = async (e) => {
     e.preventDefault();
     try {
-      await api.post("/api/expenses", {
-        amount_kes: Number(expenseAmount),
-        category: expenseCategory,
-        expense_date: expenseDate,
-        description: expenseDesc,
-        receipt_url: expenseReceiptUrl || null,
+      const res = await apiFetch("/api/expenses", {
+        method: "POST",
+        body: JSON.stringify({
+          amount_kes: Number(expenseAmount),
+          category: expenseCategory,
+          expense_date: expenseDate,
+          description: expenseDesc,
+          receipt_url: expenseReceiptUrl || null
+        })
       });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error");
       addToast("Expense logged");
       setExpenseAmount("");
       setExpenseCategory("materials");
@@ -294,10 +286,14 @@ export default function Home() {
       addToast(err.message, "error");
     }
   };
+
+  // Admin: approve receipt
   const submitApproveReceipt = async (e) => {
     e.preventDefault();
     try {
-      await api.post(`/api/admin/receipts/${approveReceiptId}/approve`);
+      const res = await apiFetch(`/api/admin/receipts/${approveReceiptId}/approve`, { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error");
       addToast("Receipt approved");
       setApproveReceiptId("");
       fetchLists();
@@ -306,33 +302,57 @@ export default function Home() {
       addToast(err.message, "error");
     }
   };
-  const submitComment = async () => {
+
+  // Flag
+  const submitFlag = async (e) => {
+    e.preventDefault();
     try {
-      await api.post(`/api/expenses/${commentModal.expenseId}/comments`, { comment: commentModal.text });
-      addToast("Comment added");
-      setCommentModal({ open: false, expenseId: "", text: "" });
-    } catch (err) {
-      addToast(err.message, "error");
-    }
-  };
-  const submitFlag = async () => {
-    try {
-      await api.post(`/api/expenses/${flagModal.expenseId}/flag`, { flagged: true });
+      const res = await apiFetch(`/api/expenses/${flagExpenseId}/flag`, {
+        method: "POST",
+        body: JSON.stringify({ flagged: true })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error");
       addToast("Expense flagged");
-      setFlagModal({ open: false, expenseId: "" });
+      setFlagExpenseId("");
       fetchLists();
       fetchReport();
     } catch (err) {
       addToast(err.message, "error");
     }
   };
+
+  // Comment
+  const submitComment = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await apiFetch(`/api/expenses/${commentExpenseId}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ comment: commentText })
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error");
+      addToast("Comment added");
+      setCommentExpenseId("");
+      setCommentText("");
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  };
+
+  // Upload receipt
   const submitUpload = async (e) => {
     e.preventDefault();
-    if (!uploadFile) return addToast("Select a file", "error");
+    if (!uploadFile) {
+      addToast("Select a file", "error");
+      return;
+    }
     const formData = new FormData();
     formData.append("file", uploadFile);
     try {
-      const res = await api.post("/api/uploads/receipt", formData, { headers: {} , raw: false });
+      const res = await apiFetch("/api/uploads/receipt", { method: "POST", body: formData });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Upload error");
       addToast("Uploaded");
       setUploadFile(null);
     } catch (err) {
@@ -340,9 +360,11 @@ export default function Home() {
     }
   };
 
-  const downloadExport = async (path, filename, mime) => {
+  // Exports
+  const downloadFile = async (path, filename, mime) => {
     try {
-      const res = await api.get(path, { raw: true, headers: {} });
+      const res = await apiFetch(path);
+      if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -356,380 +378,404 @@ export default function Home() {
     }
   };
 
-  const totalPages = useMemo(() => ({
-    contributions: Math.max(1, Math.ceil(counts.contributions / PAGE_SIZE)),
-    receipts: Math.max(1, Math.ceil(counts.receipts / PAGE_SIZE)),
-    expenses: Math.max(1, Math.ceil(counts.expenses / PAGE_SIZE)),
-  }), [counts]);
+  const role = me?.role;
 
-  const roleLabel = role ? role.charAt(0).toUpperCase() + role.slice(1) : "Unknown";
+  // Mobile sticky primary actions (per role)
+  const primaryActions = [];
+  if (role === "investor" || role === "admin") {
+    primaryActions.push({
+      label: "Add Contribution",
+      onClick: () => document.getElementById("contrib-form")?.scrollIntoView({ behavior: "smooth" })
+    });
+  }
+  if (role === "developer" || role === "admin") {
+    primaryActions.push({
+      label: "Log Expense",
+      onClick: () => document.getElementById("expense-form")?.scrollIntoView({ behavior: "smooth" })
+    });
+  }
+  if (role === "admin") {
+    primaryActions.push({
+      label: "Approve Receipt",
+      onClick: () => document.getElementById("approve-form")?.scrollIntoView({ behavior: "smooth" })
+    });
+  }
 
   return (
     <div className="space-y-6 pb-24">
       <Toasts toasts={toasts} remove={removeToast} />
 
+      {/* Header */}
       <header className="section">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between text-center md:text-left">
-          <div className="w-full">
-            <h1 className="text-3xl font-bold text-ink">BrickLedger</h1>
-            <p className="subtle mt-1">Enabling smart & transparent investing back at home</p>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-sm uppercase tracking-[0.2em] text-ink/60">Building Project Financials</p>
+            <h1 className="text-3xl font-bold text-ink">Control Center</h1>
+            <p className="subtle">Kenyan project · Investors · Developers · Admin</p>
           </div>
-          <div className="flex flex-col items-center md:items-end gap-2 w-full md:w-auto">
+          <div className="flex flex-col items-start gap-2 md:items-end w-full sm:w-auto">
             <span className="badge">{apiStatus}</span>
             {session ? (
-              <div className="glass px-4 py-3 border border-white/60 w-full md:w-72 text-left">
-                <div className="text-sm font-semibold text-ink">
-                  Logged in as: {me?.full_name || session.user.email}
-                </div>
-                <div className="text-xs text-ink/70 mt-1">Role: {roleLabel}</div>
-                <div className="text-xs text-ink/70 break-words">{session.user.email}</div>
-                <div className="text-xs text-ink/60 mt-1">
-                  Last login: {session.user.last_sign_in_at ? new Date(session.user.last_sign_in_at).toLocaleString() : "—"}
-                </div>
-                <button className="btn-ghost mt-2 w-full" onClick={handleLogout}>
+              <div className="text-right w-full sm:w-auto">
+                <p className="text-sm text-ink/80 break-words">{session.user.email}</p>
+                <button className="btn-ghost mt-2 w-full sm:w-auto" onClick={handleLogout}>
                   Logout
                 </button>
               </div>
             ) : (
-              <form
-                onSubmit={handleLogin}
-                className="glass p-4 w-full md:w-80 flex flex-col gap-2 border border-white/50"
-              >
-                <h3 className="text-lg font-semibold text-ink text-center md:text-left">Sign In</h3>
+              <form onSubmit={handleLogin} className="glass p-4 w-full sm:w-80 flex flex-col gap-2 border border-white/50">
+                <h3 className="text-lg font-semibold text-ink">Sign In</h3>
                 <input className="input" type="email" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
                 <input className="input" type="password" placeholder="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
                 <button className="btn-primary" type="submit">
                   Sign In
                 </button>
                 {authError && <span className="text-sm text-red-600">{authError}</span>}
+                <p className="text-xs text-ink/60">
+                  Forgot password? <a className="text-ink underline" href="/auth/reset">Reset here</a>
+                </p>
               </form>
             )}
           </div>
         </div>
       </header>
 
-      {/* Tabs */}
-      <div className="section flex flex-wrap gap-2">
-        {["dashboard", "reports"].map((t) => (
-          <button
-            key={t}
-            className={`tab ${tab === t ? "tab-active" : ""}`}
-            onClick={() => setTab(t)}
-          >
-            {t === "dashboard" ? "Dashboard" : "Reports"}
-          </button>
-        ))}
-      </div>
-
-      {tab === "dashboard" && (
-        <>
-          {/* Filters */}
-          <section className="section">
-            <h3 className="heading">Filters</h3>
-            <div className="grid gap-4 md:grid-cols-4">
-              <div>
-                <label className="label">Start date</label>
-                <input
-                  className="input"
-                  type="date"
-                  value={filters.startDate}
-                  onChange={(e) => setFilters((f) => ({ ...f, startDate: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="label">End date</label>
-                <input
-                  className="input"
-                  type="date"
-                  value={filters.endDate}
-                  onChange={(e) => setFilters((f) => ({ ...f, endDate: e.target.value }))}
-                />
-              </div>
-              <div>
-                <label className="label">Status</label>
-                <select
-                  className="input"
-                  value={filters.status}
-                  onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
-                >
-                  <option value="">All</option>
-                  <option value="pending">Pending</option>
-                  <option value="confirmed">Confirmed</option>
-                  <option value="approved">Approved</option>
-                  <option value="rejected">Rejected</option>
-                </select>
-              </div>
-              <div>
-                <label className="label">Category (expenses)</label>
-                <select
-                  className="input"
-                  value={filters.category}
-                  onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))}
-                >
-                  <option value="">All</option>
-                  <option value="materials">Materials</option>
-                  <option value="labour">Labour</option>
-                  <option value="other">Other</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex gap-2 mt-3">
-              <button className="btn-primary" type="button" onClick={() => { setPageState({ contributions:1, receipts:1, expenses:1 }); fetchLists(); fetchReport(); }}>
-                Apply
-              </button>
-              <button className="btn-ghost" type="button" onClick={() => {
-                const { start, end } = defaultDateRange();
-                setFilters({ startDate: start, endDate: end, status: "", category: "" });
-                setPageState({ contributions:1, receipts:1, expenses:1 });
-                fetchLists();
-                fetchReport();
-              }}>
-                Reset (last 30d)
-              </button>
-            </div>
-          </section>
-
-          {/* Lists */}
-          <section className="grid gap-6 lg:grid-cols-3">
-            <div className="section">
-              <h3 className="heading">Contributions (GBP)</h3>
-              {loadingLists ? <SectionSkeleton /> : (
-                <>
-                  <pre className="bg-white/80 rounded-xl p-3 border border-white/60 text-xs max-h-64 overflow-auto">
-{JSON.stringify(contribs, null, 2)}
-                  </pre>
-                  <Pagination
-                    page={pageState.contributions}
-                    totalPages={totalPages.contributions}
-                    onPage={(p) => setPageState((s) => ({ ...s, contributions: p })) || fetchLists()}
-                  />
-                </>
-              )}
-            </div>
-            <div className="section">
-              <h3 className="heading">Receipts</h3>
-              {loadingLists ? <SectionSkeleton /> : (
-                <>
-                  <pre className="bg-white/80 rounded-xl p-3 border border-white/60 text-xs max-h-64 overflow-auto">
-{JSON.stringify(receipts, null, 2)}
-                  </pre>
-                  <Pagination
-                    page={pageState.receipts}
-                    totalPages={totalPages.receipts}
-                    onPage={(p) => setPageState((s) => ({ ...s, receipts: p })) || fetchLists()}
-                  />
-                </>
-              )}
-            </div>
-            <div className="section">
-              <h3 className="heading">Expenses</h3>
-              {loadingLists ? <SectionSkeleton /> : (
-                <>
-                  <div className="space-y-3 max-h-80 overflow-auto pr-1">
-                    {expenses.length === 0 && <p className="subtle">No expenses.</p>}
-                    {expenses.map((ex) => (
-                      <div key={ex.id} className="glass p-3 border border-white/60 flex flex-col gap-2">
-                        <div className="flex justify-between items-center">
-                          <div className="text-sm font-semibold text-ink">KES {ex.amount_kes}</div>
-                          <span className="badge capitalize">{ex.category}</span>
-                        </div>
-                        <div className="text-xs text-ink/70">{ex.expense_date}</div>
-                        <div className="text-sm text-ink/80">{ex.description || "—"}</div>
-                        {ex.receipt_url && (
-                          <a className="text-xs text-ink underline" href={ex.receipt_url} target="_blank" rel="noreferrer">
-                            View receipt
-                          </a>
-                        )}
-                        <div className="flex gap-2">
-                          <button className="btn-ghost w-full" onClick={() => setCommentModal({ open: true, expenseId: ex.id, text: "" })}>
-                            Comment
-                          </button>
-                          <button className="btn-primary w-full" onClick={() => setFlagModal({ open: true, expenseId: ex.id })}>
-                            Flag
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <Pagination
-                    page={pageState.expenses}
-                    totalPages={totalPages.expenses}
-                    onPage={(p) => setPageState((s) => ({ ...s, expenses: p })) || fetchLists()}
-                  />
-                </>
-              )}
-            </div>
-          </section>
-
-          {/* Forms */}
-          <div className="grid gap-6 lg:grid-cols-2">
-            {(isInvestor || isAdmin) && (
-              <section className="section" id="contrib-form">
-                <h3 className="heading">Investor: Create Contribution (GBP)</h3>
-                <form onSubmit={submitContribution} className="space-y-3">
-                  <div>
-                    <label className="label">GBP amount</label>
-                    <input className="input" type="number" step="0.01" placeholder="1000.00" value={contribAmount} onChange={(e) => setContribAmount(e.target.value)} required />
-                  </div>
-                  <div>
-                    <label className="label">Note (optional)</label>
-                    <textarea className="input h-24" placeholder="Description or reference" value={contribNote} onChange={(e) => setContribNote(e.target.value)} />
-                  </div>
-                  <button className="btn-primary" type="submit">Create Contribution</button>
-                </form>
-              </section>
-            )}
-
-            {(isDev || isAdmin) && (
-              <section className="section">
-                <h3 className="heading">Developer: Confirm Receipt (KES)</h3>
-                <form onSubmit={submitReceipt} className="space-y-3">
-                  <div>
-                    <label className="label">Contribution ID</label>
-                    <input className="input" type="text" placeholder="uuid" value={receiptContributionId} onChange={(e) => setReceiptContributionId(e.target.value)} required />
-                  </div>
-                  <div>
-                    <label className="label">KES received</label>
-                    <input className="input" type="number" step="0.01" placeholder="100000" value={receiptKes} onChange={(e) => setReceiptKes(e.target.value)} required />
-                  </div>
-                  <div>
-                    <label className="label">FX rate (optional)</label>
-                    <input className="input" type="number" step="0.000001" placeholder="160.123456" value={receiptFx} onChange={(e) => setReceiptFx(e.target.value)} />
-                  </div>
-                  <button className="btn-primary" type="submit">Log Receipt</button>
-                </form>
-              </section>
+      {/* Session & Reports */}
+      <section className="section">
+        <div className="grid gap-6 lg:grid-cols-2">
+          <div>
+            <h2 className="heading">Session & Role</h2>
+            {me ? (
+              <pre className="bg-white/80 rounded-xl p-4 border border-white/60 text-sm overflow-x-auto">
+{JSON.stringify(me, null, 2)}
+              </pre>
+            ) : (
+              <p className="subtle">Not loaded.</p>
             )}
           </div>
+          <div>
+            <h2 className="heading">Reports (Summary)</h2>
+            {report ? (
+              <div className="space-y-3 text-sm">
+                <div className="glass p-3">
+                  <div className="font-semibold">Balances</div>
+                  <div>Total Received (KES): {report.balances?.total_received_kes ?? "-"}</div>
+                  <div>Total Contributions (GBP): {report.balances?.total_contributions_gbp ?? "-"}</div>
+                  <div>Total Expenses (KES): {report.balances?.total_expenses_kes ?? "-"}</div>
+                  <div>Balance (KES): {report.balances?.balance_kes ?? "-"}</div>
+                </div>
+                <div className="glass p-3">
+                  <div className="font-semibold">Contributions by Investor</div>
+                  <ul className="list-disc list-inside">
+                    {(report.contributions_by_investor || []).map((c) => (
+                      <li key={c.investor_id}>{c.investor_name || c.investor_id} — GBP {c.total_gbp}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="glass p-3">
+                  <div className="font-semibold">Expenses by Category</div>
+                  <ul className="list-disc list-inside">
+                    {(report.expenses_by_category || []).map((e, i) => (
+                      <li key={i}>{e.category}: KES {e.total_kes}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="glass p-3">
+                  <div className="font-semibold">Monthly Cashflow</div>
+                  <ul className="list-disc list-inside">
+                    {(report.monthly_cashflow || []).map((m, i) => (
+                      <li key={i}>
+                        {m.month}: inflow {m.inflow_kes}, outflow {m.outflow_kes}, net {m.net_kes}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            ) : (
+              <p className="subtle">No report data yet.</p>
+            )}
+          </div>
+        </div>
+      </section>
 
-          {(isDev || isAdmin) && (
-            <section className="section" id="expense-form">
-              <h3 className="heading">Developer: Log Expense</h3>
-              <form onSubmit={submitExpense} className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <label className="label">Amount (KES)</label>
-                  <input className="input" type="number" step="0.01" placeholder="5000" value={expenseAmount} onChange={(e) => setExpenseAmount(e.target.value)} required />
-                </div>
-                <div>
-                  <label className="label">Category</label>
-                  <select className="input" value={expenseCategory} onChange={(e) => setExpenseCategory(e.target.value)}>
-                    <option value="materials">materials</option>
-                    <option value="labour">labour</option>
-                    <option value="other">other</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="label">Expense date</label>
-                  <input className="input" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} required />
-                </div>
-                <div>
-                  <label className="label">Receipt URL (optional)</label>
-                  <input className="input" type="url" placeholder="https://..." value={expenseReceiptUrl} onChange={(e) => setExpenseReceiptUrl(e.target.value)} />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="label">Description</label>
-                  <textarea className="input h-24" placeholder="What was this expense for?" value={expenseDesc} onChange={(e) => setExpenseDesc(e.target.value)} />
-                </div>
-                <div className="md:col-span-2 flex items-center gap-3 flex-wrap">
-                  <button className="btn-primary" type="submit">Log Expense</button>
-                </div>
-              </form>
-            </section>
-          )}
+      {/* Lists */}
+      <section className="grid gap-6 lg:grid-cols-3">
+        <div className="section">
+          <h3 className="heading">Contributions</h3>
+          <pre className="bg-white/80 rounded-xl p-3 border border-white/60 text-xs max-h-64 overflow-auto">
+{JSON.stringify(contribs, null, 2)}
+          </pre>
+        </div>
+        <div className="section">
+          <h3 className="heading">Receipts</h3>
+          <pre className="bg-white/80 rounded-xl p-3 border border-white/60 text-xs max-h-64 overflow-auto">
+{JSON.stringify(receipts, null, 2)}
+          </pre>
+        </div>
+        <div className="section">
+          <h3 className="heading">Expenses</h3>
+          <pre className="bg-white/80 rounded-xl p-3 border border-white/60 text-xs max-h-64 overflow-auto">
+{JSON.stringify(expenses, null, 2)}
+          </pre>
+        </div>
+      </section>
 
-          {(isDev || isAdmin) && (
-            <section className="section">
-              <h3 className="heading">Developer: Upload Receipt</h3>
-              <form onSubmit={submitUpload} className="flex flex-col gap-3 max-w-md">
-                <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} className="input" />
-                <button className="btn-primary" type="submit">Upload</button>
-              </form>
-            </section>
-          )}
-
-          {isAdmin && (
-            <section className="section" id="approve-form">
-              <h3 className="heading">Admin: Approve Receipt</h3>
-              <form onSubmit={submitApproveReceipt} className="flex flex-col gap-3 max-w-md">
-                <input className="input" type="text" placeholder="receipt_id" value={approveReceiptId} onChange={(e) => setApproveReceiptId(e.target.value)} required />
-                <button className="btn-primary" type="submit">Approve Receipt</button>
-              </form>
-            </section>
-          )}
-
-          {/* Modals */}
-          {commentModal.open && (
-            <div className="modal">
-              <div className="modal-content">
-                <h4 className="heading">Add Comment</h4>
-                <textarea
-                  className="input h-24"
-                  placeholder="Add your note"
-                  value={commentModal.text}
-                  onChange={(e) => setCommentModal((m) => ({ ...m, text: e.target.value }))}
+      {/* Forms */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {(role === "investor" || role === "admin") && (
+          <section className="section" id="contrib-form">
+            <h3 className="heading">Investor: Create Contribution (GBP)</h3>
+            <form onSubmit={submitContribution} className="space-y-3">
+              <div>
+                <label className="label">GBP amount</label>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.01"
+                  placeholder="1000.00"
+                  value={contribAmount}
+                  onChange={(e) => setContribAmount(e.target.value)}
                   required
                 />
-                <div className="flex gap-2 mt-3">
-                  <button className="btn-primary" onClick={submitComment}>Submit</button>
-                  <button className="btn-ghost" onClick={() => setCommentModal({ open: false, expenseId: "", text: "" })}>Cancel</button>
-                </div>
               </div>
-            </div>
-          )}
-          {flagModal.open && (
-            <div className="modal">
-              <div className="modal-content">
-                <h4 className="heading">Flag Expense</h4>
-                <p className="text-sm text-ink/70">Are you sure you want to flag this expense?</p>
-                <div className="flex gap-2 mt-3">
-                  <button className="btn-primary" onClick={submitFlag}>Flag</button>
-                  <button className="btn-ghost" onClick={() => setFlagModal({ open: false, expenseId: "" })}>Cancel</button>
-                </div>
+              <div>
+                <label className="label">Date sent</label>
+                <input className="input" type="date" value={contribDateSent} onChange={(e) => setContribDateSent(e.target.value)} required />
               </div>
+              <div>
+                <label className="label">Note (optional)</label>
+                <textarea className="input h-24" placeholder="Description or reference" value={contribNote} onChange={(e) => setContribNote(e.target.value)} />
+              </div>
+              <button className="btn-primary" type="submit">
+                Create Contribution
+              </button>
+            </form>
+          </section>
+        )}
+
+        {(role === "developer" || role === "admin") && (
+          <section className="section">
+            <h3 className="heading">Developer: Confirm Receipt (KES)</h3>
+            <form onSubmit={submitReceipt} className="space-y-3">
+              <div>
+                <label className="label">Contribution ID</label>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="uuid"
+                  value={receiptContributionId}
+                  onChange={(e) => setReceiptContributionId(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="label">KES received</label>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.01"
+                  placeholder="100000"
+                  value={receiptKes}
+                  onChange={(e) => setReceiptKes(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="label">FX rate (optional)</label>
+                <input
+                  className="input"
+                  type="number"
+                  step="0.000001"
+                  placeholder="160.123456"
+                  value={receiptFx}
+                  onChange={(e) => setReceiptFx(e.target.value)}
+                />
+              </div>
+              <button className="btn-primary" type="submit">
+                Log Receipt
+              </button>
+            </form>
+          </section>
+        )}
+      </div>
+
+      {(role === "developer" || role === "admin") && (
+        <section className="section" id="expense-form">
+          <h3 className="heading">Developer: Log Expense</h3>
+          <form onSubmit={submitExpense} className="grid gap-4 md:grid-cols-2">
+            <div>
+              <label className="label">Amount (KES)</label>
+              <input
+                className="input"
+                type="number"
+                step="0.01"
+                placeholder="5000"
+                value={expenseAmount}
+                onChange={(e) => setExpenseAmount(e.target.value)}
+                required
+              />
             </div>
-          )}
-        </>
+            <div>
+              <label className="label">Category</label>
+              <select className="input" value={expenseCategory} onChange={(e) => setExpenseCategory(e.target.value)}>
+                <option value="materials">materials</option>
+                <option value="labour">labour</option>
+                <option value="other">other</option>
+              </select>
+            </div>
+            <div>
+              <label className="label">Expense date</label>
+              <input className="input" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} required />
+            </div>
+            <div>
+              <label className="label">Receipt URL (optional)</label>
+              <input
+                className="input"
+                type="url"
+                placeholder="https://..."
+                value={expenseReceiptUrl}
+                onChange={(e) => setExpenseReceiptUrl(e.target.value)}
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label className="label">Description</label>
+              <textarea
+                className="input h-24"
+                placeholder="What was this expense for?"
+                value={expenseDesc}
+                onChange={(e) => setExpenseDesc(e.target.value)}
+              />
+            </div>
+            <div className="md:col-span-2 flex items-center gap-3 flex-wrap">
+              <button className="btn-primary" type="submit">
+                Log Expense
+              </button>
+            </div>
+          </form>
+        </section>
       )}
 
-      {tab === "reports" && (
+      {(role === "developer" || role === "admin") && (
         <section className="section">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="heading">Reports</h3>
-            <div className="flex gap-2">
-              <button className="btn-primary" onClick={() => downloadExport("/api/export/pdf", "financials.pdf", "application/pdf")}>Download PDF</button>
-              <button className="btn-primary" onClick={() => downloadExport("/api/export/excel", "financials.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}>Download Excel</button>
-            </div>
-          </div>
-          {loadingReport ? <SectionSkeleton /> : report ? (
-            <div className="grid gap-4 md:grid-cols-2">
-              <div className="glass p-4">
-                <div className="font-semibold">Developer Balance</div>
-                <div className="text-sm">Balance (KES): {report.balances?.balance_kes ?? "-"}</div>
-              </div>
-              <div className="glass p-4">
-                <div className="font-semibold">Total Contributions</div>
-                <div className="text-sm">Total GBP: {report.balances?.total_received_gbp ?? "-"}</div>
-                <div className="text-sm">Total KES (confirmed): {report.balances?.total_received_kes ?? "-"}</div>
-              </div>
-              <div className="glass p-4">
-                <div className="font-semibold">Total Expenses</div>
-                <div className="text-sm">KES: {report.balances?.total_expenses_kes ?? "-"}</div>
-              </div>
-              <div className="glass p-4">
-                <div className="font-semibold">Monthly Cashflow</div>
-                <ul className="list-disc list-inside text-sm">
-                  {(report.monthly_cashflow || []).map((m, i) => (
-                    <li key={i}>
-                      {m.month}: inflow {m.inflow_kes}, outflow {m.outflow_kes}, net {m.net_kes}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          ) : (
-            <p className="subtle">No report data.</p>
-          )}
+          <h3 className="heading">Developer: Upload Receipt</h3>
+          <form onSubmit={submitUpload} className="flex flex-col gap-3 max-w-md">
+            <input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} className="input" />
+            <button className="btn-primary" type="submit">
+              Upload
+            </button>
+          </form>
         </section>
+      )}
+
+      {role === "admin" && (
+        <section className="section" id="approve-form">
+          <h3 className="heading">Admin: Approve Receipt</h3>
+          <form onSubmit={submitApproveReceipt} className="flex flex-col gap-3 max-w-md">
+            <input
+              className="input"
+              type="text"
+              placeholder="receipt_id"
+              value={approveReceiptId}
+              onChange={(e) => setApproveReceiptId(e.target.value)}
+              required
+            />
+            <button className="btn-primary" type="submit">
+              Approve Receipt
+            </button>
+          </form>
+        </section>
+      )}
+
+      {(role === "investor" || role === "admin") && (
+        <section className="section">
+          <h3 className="heading">Flags & Comments</h3>
+          <div className="grid gap-4 md:grid-cols-2">
+            <form onSubmit={submitFlag} className="flex flex-col gap-3 glass p-4">
+              <div>
+                <label className="label">Expense ID to flag</label>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="expense_id"
+                  value={flagExpenseId}
+                  onChange={(e) => setFlagExpenseId(e.target.value)}
+                  required
+                />
+              </div>
+              <button className="btn-primary" type="submit">
+                Flag Expense
+              </button>
+            </form>
+
+            <form onSubmit={submitComment} className="flex flex-col gap-3 glass p-4">
+              <div>
+                <label className="label">Expense ID to comment</label>
+                <input
+                  className="input"
+                  type="text"
+                  placeholder="expense_id"
+                  value={commentExpenseId}
+                  onChange={(e) => setCommentExpenseId(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="label">Comment</label>
+                <textarea
+                  className="input h-20"
+                  placeholder="Add your note"
+                  value={commentText}
+                  onChange={(e) => setCommentText(e.target.value)}
+                  required
+                />
+              </div>
+              <button className="btn-primary" type="submit">
+                Add Comment
+              </button>
+            </form>
+          </div>
+        </section>
+      )}
+
+      {role === "admin" && (
+        <section className="section">
+          <h3 className="heading">Admin: Lock / Soft-delete</h3>
+          <p className="subtle mb-2">Table: contributions | receipts | expenses | expense_comments</p>
+          <AdminLockDeleteForm apiBase={apiBase} session={session} toast={addToast} />
+        </section>
+      )}
+
+      {role === "admin" && (
+        <section className="section">
+          <h3 className="heading">Exports</h3>
+          <div className="flex flex-wrap gap-3">
+            <button className="btn-primary" type="button" onClick={() => downloadFile("/api/export/pdf", "financials.pdf", "application/pdf")}>
+              Download PDF
+            </button>
+            <button
+              className="btn-primary"
+              type="button"
+              onClick={() =>
+                downloadFile("/api/export/excel", "financials.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+              }
+            >
+              Download Excel
+            </button>
+          </div>
+        </section>
+      )}
+
+      {/* Sticky action bar (mobile-first) */}
+      {primaryActions.length > 0 && (
+        <div className="sticky-bar">
+          <div className="sticky-bar-inner">
+            {primaryActions.map((a, idx) => (
+              <button key={idx} className="btn-primary w-full" type="button" onClick={a.onClick}>
+                {a.label}
+              </button>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
