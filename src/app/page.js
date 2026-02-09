@@ -93,6 +93,8 @@ export default function Home() {
   const [commentText, setCommentText] = useState("");
 
   // Health
+  // Realtime refresh for receipts/expenses — DISABLED to avoid websocket errors
+  /*
   useEffect(() => {
     const check = async () => {
       try {
@@ -277,7 +279,7 @@ export default function Home() {
       supabase.removeChannel(channel);
     };
   }, [session, fetchReceipts, fetchExpenses]);
-
+*/
   // Auth handlers
   const handleLogin = async (e) => {
     e.preventDefault();
