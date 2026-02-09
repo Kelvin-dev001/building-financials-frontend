@@ -9,8 +9,8 @@ async function getToken() {
   if (error) throw error;
   if (!data.session) return null;
 
-  const expiresAtMs = data.session.expires_at ? data.session.expires_at * 1000 : 0;
-  if (expiresAtMs && expiresAtMs - Date.now() < 2 * 60 * 1000) {
+  const expiresAt = data.session.expires_at ? data.session.expires_at * 1000 : 0;
+  if (expiresAt && expiresAt - Date.now() < 2 * 60 * 1000) {
     const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession();
     if (refreshErr) throw refreshErr;
     return refreshed.session?.access_token ?? null;
@@ -20,10 +20,9 @@ async function getToken() {
 
 export async function apiFetch(path, options = {}) {
   const token = await getToken();
-  const isFormData = options.body instanceof FormData;
   const headers = {
     ...(options.headers || {}),
-    ...(isFormData ? {} : { "Content-Type": "application/json" }),
+    "Content-Type": options.body instanceof FormData ? undefined : "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {})
   };
 

@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { supabase } from "../lib/supabaseClient";
-import { apiFetch } from "../lib/apiClient";
+import { supabase } from "@/lib/supabaseClient";
+import { apiFetch } from "@/lib/apiClient";
 
 function Toasts({ toasts, remove }) {
   return (
