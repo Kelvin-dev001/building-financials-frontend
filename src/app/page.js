@@ -65,7 +65,7 @@ const statusOptions = [
 ];
 
 const roleOptions = [
-  { value: "admin", label: "Admin", desc: "Full control & approvals" },
+  { value: "admin", label: "Admin", desc: "Add Investors & Developers" },
   { value: "investor", label: "Investor", desc: "Send Funds, View Contributions & How It Was Used" },
   { value: "developer", label: "Developer", desc: "Receive Funds & Add expenses" }
 ];
