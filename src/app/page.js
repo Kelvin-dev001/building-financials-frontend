@@ -488,7 +488,12 @@ export default function Home() {
     }
   };
 
-  const role = me?.role;
+  // Normalize role for consistent header + permissions
+  const normalizedRole = cleanString(me?.role)?.toLowerCase() || cleanString(selectedRole)?.toLowerCase() || null;
+
+  const header = headerConfig[normalizedRole] ?? headerConfig.default;
+  const role = normalizedRole;
+
   const isAdmin = role === "admin";
   const isDev = role === "developer";
   const isInv = role === "investor";
@@ -500,7 +505,6 @@ export default function Home() {
   const approvedContribs = useMemo(() => visibleContribs.filter((c) => c.status === "approved"), [visibleContribs]);
 
   const showLogin = authReady && (!session || !me?.role);
-  const header = headerConfig[role] || headerConfig.default;
 
   if (showLogin) {
     return (
@@ -598,6 +602,7 @@ export default function Home() {
           </button>
         ))}
       </div>
+
       {/* Dashboard */}
       {tab === "dashboard" && (
         <section className="section">
@@ -758,7 +763,7 @@ export default function Home() {
                     <div>
                       <div className="font-semibold text-ink">GBP {Number(c.gbp_amount).toLocaleString()}</div>
                       <div className="text-xs text-ink/70">Created: {formatDate(c.created_at)}</div>
-                      <div className="text-xs text-ink/70">Date sent: {c.date_sent || "��"}</div>
+                      <div className="text-xs text-ink/70">Date sent: {c.date_sent || "—"}</div>
                     </div>
                     <span className="badge capitalize">{c.status}</span>
                   </div>
