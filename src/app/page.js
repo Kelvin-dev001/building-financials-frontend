@@ -7,8 +7,19 @@ import { apiFetch } from "@/lib/apiClient";
 const PAGE_SIZE = 10;
 
 // Sanitizers to avoid sending "null"/"undefined"/empty strings to the API (prevents timestamp parse errors)
-const cleanDate = (v) => (v && v !== "null" && v !== "undefined" ? v : null);
-const cleanString = (v) => (v && v !== "null" && v !== "undefined" ? v : null);
+const cleanString = (value) => {
+  if (value === undefined || value === null) return null;
+  const s = String(value).trim();
+  if (!s || s === "null" || s === "undefined") return null;
+  return s;
+};
+
+const cleanDate = (value) => {
+  const s = cleanString(value);
+  if (!s) return null;
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? null : s;
+};
 
 function Toasts({ toasts, remove }) {
   return (
@@ -109,6 +120,18 @@ export default function Home() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  const handleUnauthorized = useCallback(
+    async (res) => {
+      if (res.status !== 401) return false;
+      await supabase.auth.signOut();
+      setMe(null);
+      setReport(null);
+      addToast("Session expired. Please sign in again.", "error");
+      return true;
+    },
+    [addToast]
+  );
+
   const fetchMe = useCallback(async () => {
     if (!session?.access_token) {
       setMe(null);
@@ -116,13 +139,14 @@ export default function Home() {
     }
     try {
       const res = await apiFetch("/api/me");
+      if (await handleUnauthorized(res)) return;
       const json = await res.json();
       if (res.ok) setMe(json);
       else setMe({ error: json.error });
     } catch (err) {
       setMe({ error: err.message });
     }
-  }, [session]);
+  }, [session, handleUnauthorized]);
 
   // Query builders with sanitization
   const contribQueryString = useMemo(() => {
@@ -172,6 +196,7 @@ export default function Home() {
     setLoadingReport(true);
     try {
       const res = await apiFetch(`/api/reports/summary${reportQueryString}`);
+      if (await handleUnauthorized(res)) return;
       const json = await res.json();
       if (res.ok) {
         setReport(json);
@@ -188,13 +213,14 @@ export default function Home() {
     } finally {
       setLoadingReport(false);
     }
-  }, [session, reportQueryString, addToast]);
+  }, [session, reportQueryString, addToast, handleUnauthorized]);
 
   const fetchContribs = useCallback(async () => {
     if (!session?.access_token) return;
     setLoadingContribs(true);
     try {
       const res = await apiFetch(`/api/contributions?${contribQueryString}`);
+      if (await handleUnauthorized(res)) return;
       const json = await res.json();
       if (res.ok) {
         setContribs(json.data || []);
@@ -207,25 +233,27 @@ export default function Home() {
     } finally {
       setLoadingContribs(false);
     }
-  }, [session, contribQueryString, addToast]);
+  }, [session, contribQueryString, addToast, handleUnauthorized]);
 
   const fetchReceipts = useCallback(async () => {
     if (!session?.access_token) return;
     try {
       const res = await apiFetch("/api/receipts");
+      if (await handleUnauthorized(res)) return;
       const json = await res.json();
       if (res.ok) setReceipts(json.data || []);
       else addToast(json.error || "Error loading receipts", "error");
     } catch (err) {
       addToast(err.message, "error");
     }
-  }, [session, addToast]);
+  }, [session, addToast, handleUnauthorized]);
 
   const fetchExpenses = useCallback(async () => {
     if (!session?.access_token) return;
     setLoadingExpenses(true);
     try {
       const res = await apiFetch(`/api/expenses?${expenseQueryString}`);
+      if (await handleUnauthorized(res)) return;
       const json = await res.json();
       if (res.ok) {
         setExpenses(json.data || []);
@@ -238,7 +266,7 @@ export default function Home() {
     } finally {
       setLoadingExpenses(false);
     }
-  }, [session, expenseQueryString, addToast]);
+  }, [session, expenseQueryString, addToast, handleUnauthorized]);
 
   useEffect(() => {
     fetchMe();
@@ -303,6 +331,7 @@ export default function Home() {
         method: "POST",
         body: JSON.stringify({ gbp_amount: Number(contribAmount), note: contribNote, date_sent: contribDateSent })
       });
+      if (await handleUnauthorized(res)) return;
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error");
       addToast("Contribution created");
@@ -323,6 +352,7 @@ export default function Home() {
         method: "POST",
         body: JSON.stringify({ status })
       });
+      if (await handleUnauthorized(res)) return;
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error");
       addToast(`Contribution ${status}`);
@@ -343,6 +373,7 @@ export default function Home() {
           fx_rate: receiptFx ? Number(receiptFx) : null
         })
       });
+      if (await handleUnauthorized(res)) return;
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error");
       addToast("Receipt logged");
@@ -363,6 +394,7 @@ export default function Home() {
         method: "POST",
         body: JSON.stringify({ flagged: true })
       });
+      if (await handleUnauthorized(res)) return;
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error");
       addToast("Expense flagged");
@@ -380,6 +412,7 @@ export default function Home() {
         method: "POST",
         body: JSON.stringify({ comment: commentText.trim() })
       });
+      if (await handleUnauthorized(res)) return;
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error");
       addToast("Comment added");
@@ -392,6 +425,7 @@ export default function Home() {
   const downloadFile = async (path, filename, mime) => {
     try {
       const res = await apiFetch(path);
+      if (await handleUnauthorized(res)) return;
       if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -627,7 +661,7 @@ export default function Home() {
                     <div>
                       <div className="font-semibold text-ink">GBP {Number(c.gbp_amount).toLocaleString()}</div>
                       <div className="text-xs text-ink/70">Created: {formatDate(c.created_at)}</div>
-                      <div className="text-xs text-ink/70">Date sent: {c.date_sent || "—"}</div>
+                      <div className="text-xs text-ink/70">Date sent: {c.date_sent || "��"}</div>
                     </div>
                     <span className="badge capitalize">{c.status}</span>
                   </div>
