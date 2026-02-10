@@ -52,7 +52,7 @@ function formatDate(d) {
 
 export default function Home() {
   const { toasts, add: addToast, remove: removeToast } = useToasts();
-  const [tab, setTab] = useState("dashboard"); // dashboard | contributions | expenses | reports
+  const [tab, setTab] = useState("dashboard");
 
   const [apiStatus, setApiStatus] = useState("Checking...");
   const [session, setSession] = useState(null);
@@ -61,13 +61,11 @@ export default function Home() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // Filters / pagination
   const [cFilters, setCFilters] = useState({ startDate: "", endDate: "", status: "", investor_id: "" });
   const [cPage, setCPage] = useState(1);
   const [eFilters, setEFilters] = useState({ startDate: "", endDate: "", status: "", category: "" });
   const [ePage, setEPage] = useState(1);
 
-  // Data
   const [contribs, setContribs] = useState([]);
   const [contribTotal, setContribTotal] = useState(0);
   const [receipts, setReceipts] = useState([]);
@@ -76,12 +74,10 @@ export default function Home() {
   const [report, setReport] = useState(null);
   const [investorOptions, setInvestorOptions] = useState([]);
 
-  // UI states
   const [loadingContribs, setLoadingContribs] = useState(false);
   const [loadingExpenses, setLoadingExpenses] = useState(false);
   const [loadingReport, setLoadingReport] = useState(false);
 
-  // Forms
   const [contribAmount, setContribAmount] = useState("");
   const [contribNote, setContribNote] = useState("");
   const [contribDateSent, setContribDateSent] = useState("");
@@ -128,7 +124,7 @@ export default function Home() {
     }
   }, [session]);
 
-  // Build query strings with sanitized values
+  // Query builders with sanitization
   const contribQueryString = useMemo(() => {
     const params = new URLSearchParams({
       page: String(cPage),
@@ -179,7 +175,6 @@ export default function Home() {
       const json = await res.json();
       if (res.ok) {
         setReport(json);
-        // build investor dropdown from report contributions_by_investor
         const options = (json.contributions_by_investor || []).map((c) => ({
           id: c.investor_id,
           name: c.investor_name || c.investor_id
@@ -220,6 +215,7 @@ export default function Home() {
       const res = await apiFetch("/api/receipts");
       const json = await res.json();
       if (res.ok) setReceipts(json.data || []);
+      else addToast(json.error || "Error loading receipts", "error");
     } catch (err) {
       addToast(err.message, "error");
     }
@@ -261,8 +257,7 @@ export default function Home() {
     fetchExpenses();
   }, [fetchExpenses]);
 
-  // Realtime refresh for receipts/expenses — DISABLED to avoid websocket errors
-  // (If you re-enable later, wrap in a try and ensure websocket works in your hosting environment)
+  // Realtime disabled to avoid websocket errors
   /*
   useEffect(() => {
     if (!session?.access_token) return;
@@ -394,7 +389,6 @@ export default function Home() {
     }
   };
 
-  // Exports (used in Reports tab)
   const downloadFile = async (path, filename, mime) => {
     try {
       const res = await apiFetch(path);
@@ -526,7 +520,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Filters */}
           <div className="grid gap-3 md:grid-cols-5">
             <div>
               <label className="label">Start date</label>
@@ -577,7 +570,6 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Contribution form (Investors/Admin) */}
           {(isInv || isAdmin) && (
             <div className="glass p-4 rounded-xl border border-white/60">
               <h4 className="text-lg font-semibold text-ink mb-2">Add Contribution (GBP)</h4>
@@ -623,7 +615,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* Contribution cards */}
           {loadingContribs ? (
             <div className="skeleton h-32 w-full" />
           ) : visibleContribs.length === 0 ? (
@@ -658,7 +649,6 @@ export default function Home() {
             </div>
           )}
 
-          {/* Pagination */}
           <div className="flex items-center gap-3">
             <button className="btn-ghost" disabled={cPage <= 1} onClick={() => setCPage((p) => Math.max(1, p - 1))}>
               Prev
@@ -675,7 +665,6 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Developer/Admin: log receipt against approved contribution */}
           {(isDev || isAdmin) && (
             <div className="glass p-4 border border-white/60 space-y-3">
               <h4 className="text-lg font-semibold text-ink">Log Receipt (select approved contribution)</h4>
@@ -841,7 +830,6 @@ export default function Home() {
             </button>
           </div>
 
-          {/* Flag / Comment actions */}
           {isInv || isAdmin ? (
             <div className="glass p-4 border border-white/60 space-y-3">
               <div className="text-sm text-ink/80">
