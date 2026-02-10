@@ -64,6 +64,12 @@ const statusOptions = [
   { value: "rejected", label: "Rejected" }
 ];
 
+const roleOptions = [
+  { value: "admin", label: "Admin", desc: "Full control & approvals" },
+  { value: "investor", label: "Investor", desc: "View contributions & expenses" },
+  { value: "developer", label: "Developer", desc: "Log receipts & expenses" }
+];
+
 function formatDate(d) {
   if (!d) return "—";
   return new Date(d).toLocaleString();
@@ -76,9 +82,11 @@ export default function Home() {
   const [apiStatus, setApiStatus] = useState("Checking...");
   const [session, setSession] = useState(null);
   const [me, setMe] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   const [authError, setAuthError] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [selectedRole, setSelectedRole] = useState("");
 
   const [cFilters, setCFilters] = useState({ startDate: "", endDate: "", status: "", investor_id: "" });
   const [cPage, setCPage] = useState(1);
@@ -123,8 +131,13 @@ export default function Home() {
 
   // Session
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => setSession(data.session ?? null));
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => setSession(sess));
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session ?? null);
+      setAuthReady(true);
+    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => {
+      setSession(sess);
+    });
     return () => listener.subscription.unsubscribe();
   }, []);
 
@@ -278,174 +291,60 @@ export default function Home() {
 
   useEffect(() => {
     fetchMe();
-    fetchReport();
-  }, [fetchMe, fetchReport]);
+  }, [fetchMe]);
 
   useEffect(() => {
-    fetchContribs();
-  }, [fetchContribs]);
-
-  useEffect(() => {
-    fetchReceipts();
-  }, [fetchReceipts]);
-
-  useEffect(() => {
-    fetchExpenses();
-  }, [fetchExpenses]);
-
-  // Realtime disabled to avoid websocket errors
-  /*
-  useEffect(() => {
-    if (!session?.access_token) return;
-    const channel = supabase
-      .channel("realtime:receipts_expenses")
-      .on("postgres_changes", { event: "*", schema: "public", table: "receipts" }, () => {
-        fetchReceipts();
-      })
-      .on("postgres_changes", { event: "*", schema: "public", table: "expenses" }, () => {
-        fetchExpenses();
-      })
-      .subscribe();
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [session, fetchReceipts, fetchExpenses]);
-  */
+    if (session?.access_token && me?.role) {
+      fetchReport();
+      fetchContribs();
+      fetchReceipts();
+      fetchExpenses();
+    }
+  }, [session, me, fetchReport, fetchContribs, fetchReceipts, fetchExpenses]);
 
   // Auth handlers
   const handleLogin = async (e) => {
     e.preventDefault();
     setAuthError("");
+
+    if (!selectedRole) {
+      setAuthError("Please select a role before signing in.");
+      return;
+    }
+
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) {
       setAuthError(error.message);
       addToast(error.message, "error");
-    } else {
-      addToast("Logged in");
+      return;
     }
+
+    const res = await apiFetch("/api/me");
+    if (await handleUnauthorized(res)) return;
+    const json = await res.json();
+
+    if (!res.ok) {
+      await supabase.auth.signOut();
+      setAuthError(json.error || "Unable to verify role.");
+      return;
+    }
+
+    if (json.role !== selectedRole) {
+      await supabase.auth.signOut();
+      setAuthError(`Role mismatch. You selected "${selectedRole}" but your account is "${json.role}".`);
+      return;
+    }
+
+    setMe(json);
+    addToast("Logged in");
   };
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     setMe(null);
     setReport(null);
+    setSelectedRole("");
     addToast("Logged out");
-  };
-
-  // Actions
-  const submitContribution = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await apiFetch("/api/contributions", {
-        method: "POST",
-        body: JSON.stringify({ gbp_amount: Number(contribAmount), note: contribNote, date_sent: contribDateSent })
-      });
-      if (await handleUnauthorized(res)) return;
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Error");
-      addToast("Contribution created");
-      setContribAmount("");
-      setContribNote("");
-      setContribDateSent("");
-      setCPage(1);
-      fetchContribs();
-      fetchReport();
-    } catch (err) {
-      addToast(err.message, "error");
-    }
-  };
-
-  const approveContribution = async (id, status) => {
-    try {
-      const res = await apiFetch(`/api/contributions/${id}/status`, {
-        method: "POST",
-        body: JSON.stringify({ status })
-      });
-      if (await handleUnauthorized(res)) return;
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Error");
-      addToast(`Contribution ${status}`);
-      fetchContribs();
-    } catch (err) {
-      addToast(err.message, "error");
-    }
-  };
-
-  const logReceipt = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await apiFetch("/api/receipts", {
-        method: "POST",
-        body: JSON.stringify({
-          contribution_id: selectedContribution,
-          kes_received: Number(receiptKes),
-          fx_rate: receiptFx ? Number(receiptFx) : null
-        })
-      });
-      if (await handleUnauthorized(res)) return;
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Error");
-      addToast("Receipt logged");
-      setSelectedContribution("");
-      setReceiptKes("");
-      setReceiptFx("");
-      fetchReceipts();
-      fetchReport();
-    } catch (err) {
-      addToast(err.message, "error");
-    }
-  };
-
-  const flagExpense = async () => {
-    if (!selectedExpense) return addToast("Select an expense", "error");
-    try {
-      const res = await apiFetch(`/api/expenses/${selectedExpense}/flag`, {
-        method: "POST",
-        body: JSON.stringify({ flagged: true })
-      });
-      if (await handleUnauthorized(res)) return;
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Error");
-      addToast("Expense flagged");
-      fetchExpenses();
-    } catch (err) {
-      addToast(err.message, "error");
-    }
-  };
-
-  const commentExpense = async () => {
-    if (!selectedExpense) return addToast("Select an expense", "error");
-    if (!commentText.trim()) return addToast("Enter a comment", "error");
-    try {
-      const res = await apiFetch(`/api/expenses/${selectedExpense}/comments`, {
-        method: "POST",
-        body: JSON.stringify({ comment: commentText.trim() })
-      });
-      if (await handleUnauthorized(res)) return;
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || "Error");
-      addToast("Comment added");
-      setCommentText("");
-    } catch (err) {
-      addToast(err.message, "error");
-    }
-  };
-
-  const downloadFile = async (path, filename, mime) => {
-    try {
-      const res = await apiFetch(path);
-      if (await handleUnauthorized(res)) return;
-      if (!res.ok) throw new Error("Export failed");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.type = mime;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      addToast(err.message, "error");
-    }
   };
 
   const role = me?.role;
@@ -459,10 +358,70 @@ export default function Home() {
   const visibleContribs = useMemo(() => contribs || [], [contribs]);
   const approvedContribs = useMemo(() => visibleContribs.filter((c) => c.status === "approved"), [visibleContribs]);
 
+  const showLogin = authReady && (!session || !me?.role);
+
+  if (showLogin) {
+    return (
+      <div className="min-h-[80vh] flex items-center justify-center">
+        <Toasts toasts={toasts} remove={removeToast} />
+        <div className="w-full max-w-3xl grid gap-6 md:grid-cols-2 glass p-6 border border-white/60 shadow-xl">
+          <div className="space-y-4">
+            <p className="text-xs uppercase tracking-[0.3em] text-ink/60">BrickLedger Access</p>
+            <h1 className="text-3xl font-bold text-ink">Secure Investor Portal</h1>
+            <p className="subtle">
+              Choose your role and sign in to access financials. This portal is protected for approved stakeholders only.
+            </p>
+            <div className="grid gap-3">
+              {roleOptions.map((r) => (
+                <button
+                  key={r.value}
+                  type="button"
+                  onClick={() => setSelectedRole(r.value)}
+                  className={`text-left glass border px-4 py-3 transition ${
+                    selectedRole === r.value ? "border-ink shadow-md" : "border-white/50"
+                  }`}
+                >
+                  <div className="font-semibold text-ink">{r.label}</div>
+                  <div className="text-xs text-ink/70">{r.desc}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+          <form onSubmit={handleLogin} className="flex flex-col gap-3">
+            <div className="text-sm text-ink/70">
+              Selected role: <span className="font-semibold text-ink">{selectedRole || "None"}</span>
+            </div>
+            <input className="input" type="email" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+            <input
+              className="input"
+              type="password"
+              placeholder="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+            <button className="btn-primary" type="submit" disabled={!selectedRole}>
+              Sign In
+            </button>
+            {authError && <span className="text-sm text-red-600">{authError}</span>}
+            <div className="text-xs text-ink/60">API Status: {apiStatus}</div>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  if (!authReady) {
+    return (
+      <div className="min-h-[60vh] flex items-center justify-center">
+        <div className="glass p-4">Loading session...</div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6 pb-10">
       <Toasts toasts={toasts} remove={removeToast} />
-
 
       {/* Header */}
       <header className="section">
@@ -474,29 +433,17 @@ export default function Home() {
           </div>
           <div className="flex flex-col items-start gap-2 md:items-end w-full sm:w-auto">
             <span className="badge">{apiStatus}</span>
-            {session ? (
-              <div className="glass px-4 py-3 border border-white/60 w-full sm:w-80 text-left">
-                <div className="text-sm font-semibold text-ink">{me?.full_name || session.user.email}</div>
-                <div className="text-xs text-ink/70 break-words">{session.user.email}</div>
-                <div className="text-xs text-ink/70">Role: {me?.role || "—"}</div>
-                <div className="text-xs text-ink/60">
-                  Last login: {me?.last_sign_in_at ? new Date(me.last_sign_in_at).toLocaleString() : "—"}
-                </div>
-                <button className="btn-ghost mt-2 w-full" onClick={handleLogout}>
-                  Logout
-                </button>
+            <div className="glass px-4 py-3 border border-white/60 w-full sm:w-80 text-left">
+              <div className="text-sm font-semibold text-ink">{me?.full_name || session.user.email}</div>
+              <div className="text-xs text-ink/70 break-words">{session.user.email}</div>
+              <div className="text-xs text-ink/70">Role: {me?.role || "—"}</div>
+              <div className="text-xs text-ink/60">
+                Last login: {me?.last_sign_in_at ? new Date(me.last_sign_in_at).toLocaleString() : "—"}
               </div>
-            ) : (
-              <form onSubmit={handleLogin} className="glass p-4 w-full sm:w-80 flex flex-col gap-2 border border-white/50">
-                <h3 className="text-lg font-semibold text-ink">Sign In</h3>
-                <input className="input" type="email" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-                <input className="input" type="password" placeholder="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-                <button className="btn-primary" type="submit">
-                  Sign In
-                </button>
-                {authError && <span className="text-sm text-red-600">{authError}</span>}
-              </form>
-            )}
+              <button className="btn-ghost mt-2 w-full" onClick={handleLogout}>
+                Logout
+              </button>
+            </div>
           </div>
         </div>
       </header>
@@ -509,7 +456,7 @@ export default function Home() {
           </button>
         ))}
       </div>
-
+      
       {/* Dashboard */}
       {tab === "dashboard" && (
         <section className="section">
