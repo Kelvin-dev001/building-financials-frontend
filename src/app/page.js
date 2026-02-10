@@ -40,12 +40,20 @@ function Toasts({ toasts, remove }) {
 
 function useToasts() {
   const [toasts, setToasts] = useState([]);
-  const add = (message, type = "success") => {
-    const id = Date.now();
-    setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => remove(id), 4000);
-  };
-  const remove = (id) => setToasts((prev) => prev.filter((t) => t.id !== id));
+
+  const remove = useCallback((id) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
+
+  const add = useCallback(
+    (message, type = "success") => {
+      const id = Date.now();
+      setToasts((prev) => [...prev, { id, message, type }]);
+      setTimeout(() => remove(id), 4000);
+    },
+    [remove]
+  );
+
   return { toasts, add, remove };
 }
 
@@ -454,6 +462,7 @@ export default function Home() {
   return (
     <div className="space-y-6 pb-10">
       <Toasts toasts={toasts} remove={removeToast} />
+
 
       {/* Header */}
       <header className="section">
