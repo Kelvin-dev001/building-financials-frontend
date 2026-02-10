@@ -66,8 +66,8 @@ const statusOptions = [
 
 const roleOptions = [
   { value: "admin", label: "Admin", desc: "Full control & approvals" },
-  { value: "investor", label: "Investor", desc: "View contributions & expenses" },
-  { value: "developer", label: "Developer", desc: "Log receipts & expenses" }
+  { value: "investor", label: "Investor", desc: "Send Funds, View Contributions & How It Was Used" },
+  { value: "developer", label: "Developer", desc: "Receive Funds & Add expenses" }
 ];
 
 function formatDate(d) {
@@ -366,10 +366,10 @@ export default function Home() {
         <Toasts toasts={toasts} remove={removeToast} />
         <div className="w-full max-w-3xl grid gap-6 md:grid-cols-2 glass p-6 border border-white/60 shadow-xl">
           <div className="space-y-4">
-            <p className="text-xs uppercase tracking-[0.3em] text-ink/60">BrickLedger Access</p>
-            <h1 className="text-3xl font-bold text-ink">Secure Investor Portal</h1>
+            <p className="text-xs uppercase tracking-[0.3em] text-ink/60">Building Trust Across Borders</p>
+            <h1 className="text-3xl font-bold text-ink">Welcome To BrickLedger</h1>
             <p className="subtle">
-              Choose your role and sign in to access financials. This portal is protected for approved stakeholders only.
+              Choose your role and sign in to access the portal.
             </p>
             <div className="grid gap-3">
               {roleOptions.map((r) => (
@@ -456,7 +456,7 @@ export default function Home() {
           </button>
         ))}
       </div>
-      
+
       {/* Dashboard */}
       {tab === "dashboard" && (
         <section className="section">
