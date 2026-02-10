@@ -70,6 +70,33 @@ const roleOptions = [
   { value: "developer", label: "Developer", desc: "Log receipts & expenses" }
 ];
 
+const headerConfig = {
+  admin: {
+    eyebrow: "Executive Console",
+    title: "Financial Control Center",
+    subtitle: "Approve transactions, oversee reporting, and manage audit‑ready records.",
+    accent: "Admin Mode"
+  },
+  investor: {
+    eyebrow: "Investor Portal",
+    title: "Capital Visibility Suite",
+    subtitle: "Track contributions, validate expenses, and review cashflow with clarity.",
+    accent: "Investor View"
+  },
+  developer: {
+    eyebrow: "Project Ops",
+    title: "Delivery & Receipts Desk",
+    subtitle: "Log receipts, record expenses, and keep project finances transparent.",
+    accent: "Developer View"
+  },
+  default: {
+    eyebrow: "Investor & Project Portal",
+    title: "Control Center",
+    subtitle: "Investors can view/filter contributions and expenses. Developers/Admin can approve and log receipts.",
+    accent: "Portal"
+  }
+};
+
 function formatDate(d) {
   if (!d) return "—";
   return new Date(d).toLocaleString();
@@ -473,6 +500,7 @@ export default function Home() {
   const approvedContribs = useMemo(() => visibleContribs.filter((c) => c.status === "approved"), [visibleContribs]);
 
   const showLogin = authReady && (!session || !me?.role);
+  const header = headerConfig[role] || headerConfig.default;
 
   if (showLogin) {
     return (
@@ -541,12 +569,12 @@ export default function Home() {
       <header className="section">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-sm uppercase tracking-[0.2em] text-ink/60">Investor & Project Portal</p>
-            <h1 className="text-3xl font-bold text-ink">Control Center</h1>
-            <p className="subtle">Investors can view/filter contributions and expenses. Developers/Admin can approve and log receipts.</p>
+            <p className="text-sm uppercase tracking-[0.2em] text-ink/60">{header.eyebrow}</p>
+            <h1 className="text-3xl font-bold text-ink">{header.title}</h1>
+            <p className="subtle">{header.subtitle}</p>
           </div>
           <div className="flex flex-col items-start gap-2 md:items-end w-full sm:w-auto">
-            <span className="badge">{apiStatus}</span>
+            <span className="badge">{header.accent}</span>
             <div className="glass px-4 py-3 border border-white/60 w-full sm:w-80 text-left">
               <div className="text-sm font-semibold text-ink">{me?.full_name || session.user.email}</div>
               <div className="text-xs text-ink/70 break-words">{session.user.email}</div>
