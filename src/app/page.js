@@ -6,7 +6,7 @@ import { apiFetch } from "@/lib/apiClient";
 
 const PAGE_SIZE = 10;
 
-// Sanitizers to avoid sending "null"/"undefined"/empty strings to the API (prevents timestamp parse errors)
+// Sanitizers to avoid sending "null"/"undefined"/empty strings to the API
 const cleanString = (value) => {
   if (value === undefined || value === null) return null;
   const s = String(value).trim();
@@ -65,9 +65,9 @@ const statusOptions = [
 ];
 
 const roleOptions = [
-  { value: "admin", label: "Admin", desc: "Add Investors & Developers" },
-  { value: "investor", label: "Investor", desc: "Send Funds, View Contributions & How It Was Used" },
-  { value: "developer", label: "Developer", desc: "Receive Funds & Add expenses" }
+  { value: "admin", label: "Admin", desc: "Full control & approvals" },
+  { value: "investor", label: "Investor", desc: "View contributions & expenses" },
+  { value: "developer", label: "Developer", desc: "Log receipts & expenses" }
 ];
 
 function formatDate(d) {
@@ -135,9 +135,7 @@ export default function Home() {
       setSession(data.session ?? null);
       setAuthReady(true);
     });
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => {
-      setSession(sess);
-    });
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, sess) => setSession(sess));
     return () => listener.subscription.unsubscribe();
   }, []);
 
@@ -169,7 +167,6 @@ export default function Home() {
     }
   }, [session, handleUnauthorized]);
 
-  // Query builders with sanitization
   const contribQueryString = useMemo(() => {
     const params = new URLSearchParams({
       page: String(cPage),
@@ -347,6 +344,123 @@ export default function Home() {
     addToast("Logged out");
   };
 
+  // Actions
+  const submitContribution = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await apiFetch("/api/contributions", {
+        method: "POST",
+        body: JSON.stringify({ gbp_amount: Number(contribAmount), note: contribNote, date_sent: contribDateSent })
+      });
+      if (await handleUnauthorized(res)) return;
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error");
+      addToast("Contribution created");
+      setContribAmount("");
+      setContribNote("");
+      setContribDateSent("");
+      setCPage(1);
+      fetchContribs();
+      fetchReport();
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  };
+
+  const approveContribution = async (id, status) => {
+    try {
+      const res = await apiFetch(`/api/contributions/${id}/status`, {
+        method: "POST",
+        body: JSON.stringify({ status })
+      });
+      if (await handleUnauthorized(res)) return;
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error");
+      addToast(`Contribution ${status}`);
+      fetchContribs();
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  };
+
+  const logReceipt = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await apiFetch("/api/receipts", {
+        method: "POST",
+        body: JSON.stringify({
+          contribution_id: selectedContribution,
+          kes_received: Number(receiptKes),
+          fx_rate: receiptFx ? Number(receiptFx) : null
+        })
+      });
+      if (await handleUnauthorized(res)) return;
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error");
+      addToast("Receipt logged");
+      setSelectedContribution("");
+      setReceiptKes("");
+      setReceiptFx("");
+      fetchReceipts();
+      fetchReport();
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  };
+
+  const flagExpense = async () => {
+    if (!selectedExpense) return addToast("Select an expense", "error");
+    try {
+      const res = await apiFetch(`/api/expenses/${selectedExpense}/flag`, {
+        method: "POST",
+        body: JSON.stringify({ flagged: true })
+      });
+      if (await handleUnauthorized(res)) return;
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error");
+      addToast("Expense flagged");
+      fetchExpenses();
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  };
+
+  const commentExpense = async () => {
+    if (!selectedExpense) return addToast("Select an expense", "error");
+    if (!commentText.trim()) return addToast("Enter a comment", "error");
+    try {
+      const res = await apiFetch(`/api/expenses/${selectedExpense}/comments`, {
+        method: "POST",
+        body: JSON.stringify({ comment: commentText.trim() })
+      });
+      if (await handleUnauthorized(res)) return;
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error");
+      addToast("Comment added");
+      setCommentText("");
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  };
+
+  const downloadFile = async (path, filename, mime) => {
+    try {
+      const res = await apiFetch(path);
+      if (await handleUnauthorized(res)) return;
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.type = mime;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  };
+
   const role = me?.role;
   const isAdmin = role === "admin";
   const isDev = role === "developer";
@@ -366,10 +480,10 @@ export default function Home() {
         <Toasts toasts={toasts} remove={removeToast} />
         <div className="w-full max-w-3xl grid gap-6 md:grid-cols-2 glass p-6 border border-white/60 shadow-xl">
           <div className="space-y-4">
-            <p className="text-xs uppercase tracking-[0.3em] text-ink/60">Building Trust Across Borders</p>
-            <h1 className="text-3xl font-bold text-ink">Welcome To BrickLedger</h1>
+            <p className="text-xs uppercase tracking-[0.3em] text-ink/60">BrickLedger Access</p>
+            <h1 className="text-3xl font-bold text-ink">Secure Investor Portal</h1>
             <p className="subtle">
-              Choose your role and sign in to access the portal.
+              Choose your role and sign in to access financials. This portal is protected for approved stakeholders only.
             </p>
             <div className="grid gap-3">
               {roleOptions.map((r) => (
@@ -456,7 +570,6 @@ export default function Home() {
           </button>
         ))}
       </div>
-
       {/* Dashboard */}
       {tab === "dashboard" && (
         <section className="section">
