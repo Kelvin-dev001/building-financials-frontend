@@ -93,8 +93,6 @@ export default function Home() {
   const [commentText, setCommentText] = useState("");
 
   // Health
-  // Realtime refresh for receipts/expenses — DISABLED to avoid websocket errors
-  /*
   useEffect(() => {
     const check = async () => {
       try {
@@ -263,7 +261,9 @@ export default function Home() {
     fetchExpenses();
   }, [fetchExpenses]);
 
-  // Realtime refresh for receipts/expenses (optional)
+  // Realtime refresh for receipts/expenses — DISABLED to avoid websocket errors
+  // (If you re-enable later, wrap in a try and ensure websocket works in your hosting environment)
+  /*
   useEffect(() => {
     if (!session?.access_token) return;
     const channel = supabase
@@ -279,7 +279,8 @@ export default function Home() {
       supabase.removeChannel(channel);
     };
   }, [session, fetchReceipts, fetchExpenses]);
-*/
+  */
+
   // Auth handlers
   const handleLogin = async (e) => {
     e.preventDefault();
