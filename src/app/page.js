@@ -72,26 +72,26 @@ const roleOptions = [
 
 const headerConfig = {
   admin: {
-    eyebrow: "Executive Console",
+    eyebrow: "BrickLedger-Executive Console",
     title: "Financial Control Center",
     subtitle: "Approve transactions, oversee reporting, and manage audit‑ready records.",
     accent: "Admin Mode"
   },
   investor: {
-    eyebrow: "Investor Portal",
+    eyebrow: "BrickLedger-Investor Portal",
     title: "Capital Visibility Suite",
     subtitle: "Track contributions, validate expenses, and review cashflow with clarity.",
     accent: "Investor View"
   },
   developer: {
-    eyebrow: "Project Ops",
+    eyebrow: "BrickLedger-Project Ops",
     title: "Delivery & Receipts Desk",
     subtitle: "Log receipts, record expenses, and keep project finances transparent.",
     accent: "Developer View"
   },
   default: {
     eyebrow: "Investor & Project Portal",
-    title: "Control Center",
+    title: "BrickLedger",
     subtitle: "Investors can view/filter contributions and expenses. Developers/Admin can approve and log receipts.",
     accent: "Portal"
   }
