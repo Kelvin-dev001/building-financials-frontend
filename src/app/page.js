@@ -102,6 +102,205 @@ function formatDate(d) {
   return new Date(d).toLocaleString();
 }
 
+function DeveloperPanel({ addToast, handleUnauthorized, materialEntries, labourEntries, reloadMaterial, reloadLabour }) {
+  const [materialDate, setMaterialDate] = useState("");
+  const [labourDate, setLabourDate] = useState("");
+
+  const [materialItems, setMaterialItems] = useState([{ description: "", supplier: "", quantity: "", unit_cost: "" }]);
+  const [labourItems, setLabourItems] = useState([{ labourer_name: "", role: "", rate_per_day: "", days_worked: "" }]);
+
+  const addMaterialRow = () =>
+    setMaterialItems((prev) => [...prev, { description: "", supplier: "", quantity: "", unit_cost: "" }]);
+  const addLabourRow = () =>
+    setLabourItems((prev) => [...prev, { labourer_name: "", role: "", rate_per_day: "", days_worked: "" }]);
+
+  const updateMaterialRow = (idx, field, value) => {
+    setMaterialItems((prev) => prev.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
+  };
+  const updateLabourRow = (idx, field, value) => {
+    setLabourItems((prev) => prev.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
+  };
+
+  const submitMaterials = async (e) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        entry_date: materialDate,
+        items: materialItems.map((i) => ({
+          description: i.description,
+          supplier: i.supplier,
+          quantity: Number(i.quantity),
+          unit_cost: Number(i.unit_cost)
+        }))
+      };
+      const res = await apiFetch("/api/material-entries", { method: "POST", body: JSON.stringify(payload) });
+      if (await handleUnauthorized(res)) return;
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to create material entry");
+      addToast("Material entry saved");
+      setMaterialItems([{ description: "", supplier: "", quantity: "", unit_cost: "" }]);
+      setMaterialDate("");
+      reloadMaterial();
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  };
+
+  const submitLabour = async (e) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        entry_date: labourDate,
+        items: labourItems.map((i) => ({
+          labourer_name: i.labourer_name,
+          role: i.role,
+          rate_per_day: Number(i.rate_per_day),
+          days_worked: Number(i.days_worked || 1)
+        }))
+      };
+      const res = await apiFetch("/api/labour-entries", { method: "POST", body: JSON.stringify(payload) });
+      if (await handleUnauthorized(res)) return;
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to create labour entry");
+      addToast("Labour entry saved");
+      setLabourItems([{ labourer_name: "", role: "", rate_per_day: "", days_worked: "" }]);
+      setLabourDate("");
+      reloadLabour();
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  };
+
+  const uploadMaterialReceipt = async (entryId, file) => {
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await apiFetch(`/api/material-entries/${entryId}/receipt`, { method: "POST", body: form });
+      if (await handleUnauthorized(res)) return;
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Upload failed");
+      addToast("Receipt uploaded");
+      reloadMaterial();
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  };
+
+  const exportExcel = async () => {
+    try {
+      const res = await apiFetch("/api/export/developer/entries/excel");
+      if (await handleUnauthorized(res)) return;
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "developer-entries.xlsx";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  };
+
+  return (
+    <section className="section space-y-6">
+      <div className="flex items-center justify-between">
+        <h3 className="heading">Developer Entries</h3>
+        <button className="btn-primary" onClick={exportExcel}>
+          Export Excel
+        </button>
+      </div>
+
+      <div className="glass p-4 border border-white/60">
+        <h4 className="font-semibold text-ink mb-2">Material Entry</h4>
+        <form onSubmit={submitMaterials} className="space-y-3">
+          <input className="input" type="date" value={materialDate} onChange={(e) => setMaterialDate(e.target.value)} required />
+          {materialItems.map((row, idx) => (
+            <div key={idx} className="grid gap-2 md:grid-cols-4">
+              <input className="input" placeholder="Item description" value={row.description} onChange={(e) => updateMaterialRow(idx, "description", e.target.value)} required />
+              <input className="input" placeholder="Supplier" value={row.supplier} onChange={(e) => updateMaterialRow(idx, "supplier", e.target.value)} />
+              <input className="input" type="number" placeholder="Quantity" value={row.quantity} onChange={(e) => updateMaterialRow(idx, "quantity", e.target.value)} required />
+              <input className="input" type="number" placeholder="Unit cost" value={row.unit_cost} onChange={(e) => updateMaterialRow(idx, "unit_cost", e.target.value)} required />
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <button type="button" className="btn-ghost" onClick={addMaterialRow}>
+              + Add Item
+            </button>
+            <button className="btn-primary" type="submit">
+              Save Materials
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div className="glass p-4 border border-white/60">
+        <h4 className="font-semibold text-ink mb-2">Labour Entry</h4>
+        <form onSubmit={submitLabour} className="space-y-3">
+          <input className="input" type="date" value={labourDate} onChange={(e) => setLabourDate(e.target.value)} required />
+          {labourItems.map((row, idx) => (
+            <div key={idx} className="grid gap-2 md:grid-cols-4">
+              <input className="input" placeholder="Name" value={row.labourer_name} onChange={(e) => updateLabourRow(idx, "labourer_name", e.target.value)} required />
+              <input className="input" placeholder="Role" value={row.role} onChange={(e) => updateLabourRow(idx, "role", e.target.value)} />
+              <input className="input" type="number" placeholder="Rate per day" value={row.rate_per_day} onChange={(e) => updateLabourRow(idx, "rate_per_day", e.target.value)} required />
+              <input className="input" type="number" placeholder="Days worked" value={row.days_worked} onChange={(e) => updateLabourRow(idx, "days_worked", e.target.value)} required />
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <button type="button" className="btn-ghost" onClick={addLabourRow}>
+              + Add Labour
+            </button>
+            <button className="btn-primary" type="submit">
+              Save Labour
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div className="glass p-4 border border-white/60">
+        <h4 className="font-semibold text-ink mb-2">Material Entries</h4>
+        {materialEntries.length === 0 ? (
+          <p className="subtle">No material entries yet.</p>
+        ) : (
+          materialEntries.map((entry) => (
+            <div key={entry.id} className="border-t border-white/40 pt-3 mt-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="font-semibold">Material Entry: {entry.entry_date}</div>
+                <input type="file" onChange={(e) => e.target.files?.[0] && uploadMaterialReceipt(entry.id, e.target.files[0])} />
+              </div>
+              <div className="text-xs text-ink/60">Receipt: {entry.receipt_path ? "Uploaded" : "None"}</div>
+              {entry.material_items?.map((item) => (
+                <div key={item.id} className="text-sm text-ink/80">
+                  {item.description} — {item.quantity} × {item.unit_cost} = {Number(item.quantity) * Number(item.unit_cost)}
+                </div>
+              ))}
+            </div>
+          ))
+        )}
+      </div>
+
+      <div className="glass p-4 border border-white/60">
+        <h4 className="font-semibold text-ink mb-2">Labour Entries</h4>
+        {labourEntries.length === 0 ? (
+          <p className="subtle">No labour entries yet.</p>
+        ) : (
+          labourEntries.map((entry) => (
+            <div key={entry.id} className="border-t border-white/40 pt-3 mt-3 space-y-2">
+              <div className="font-semibold">Labour Entry: {entry.entry_date}</div>
+              {entry.labour_items?.map((item) => (
+                <div key={item.id} className="text-sm text-ink/80">
+                  {item.labourer_name} ({item.role || "role"}) — {item.rate_per_day} × {item.total_paid / item.rate_per_day} = {item.total_paid}
+                </div>
+              ))}
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
 export default function Home() {
   const { toasts, add: addToast, remove: removeToast } = useToasts();
   const [tab, setTab] = useState("dashboard");
@@ -127,6 +326,9 @@ export default function Home() {
   const [expenseTotal, setExpenseTotal] = useState(0);
   const [report, setReport] = useState(null);
   const [investorOptions, setInvestorOptions] = useState([]);
+
+  const [materialEntries, setMaterialEntries] = useState([]);
+  const [labourEntries, setLabourEntries] = useState([]);
 
   const [loadingContribs, setLoadingContribs] = useState(false);
   const [loadingExpenses, setLoadingExpenses] = useState(false);
@@ -313,6 +515,32 @@ export default function Home() {
     }
   }, [session, expenseQueryString, addToast, handleUnauthorized]);
 
+  const fetchMaterialEntries = useCallback(async () => {
+    if (!session?.access_token) return;
+    try {
+      const res = await apiFetch("/api/material-entries");
+      if (await handleUnauthorized(res)) return;
+      const json = await res.json();
+      if (res.ok) setMaterialEntries(json.data || []);
+      else addToast(json.error || "Error loading material entries", "error");
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  }, [session, addToast, handleUnauthorized]);
+
+  const fetchLabourEntries = useCallback(async () => {
+    if (!session?.access_token) return;
+    try {
+      const res = await apiFetch("/api/labour-entries");
+      if (await handleUnauthorized(res)) return;
+      const json = await res.json();
+      if (res.ok) setLabourEntries(json.data || []);
+      else addToast(json.error || "Error loading labour entries", "error");
+    } catch (err) {
+      addToast(err.message, "error");
+    }
+  }, [session, addToast, handleUnauthorized]);
+
   useEffect(() => {
     fetchMe();
   }, [fetchMe]);
@@ -323,8 +551,10 @@ export default function Home() {
       fetchContribs();
       fetchReceipts();
       fetchExpenses();
+      fetchMaterialEntries();
+      fetchLabourEntries();
     }
-  }, [session, me, fetchReport, fetchContribs, fetchReceipts, fetchExpenses]);
+  }, [session, me, fetchReport, fetchContribs, fetchReceipts, fetchExpenses, fetchMaterialEntries, fetchLabourEntries]);
 
   // Auth handlers
   const handleLogin = async (e) => {
@@ -596,7 +826,7 @@ export default function Home() {
 
       {/* Tabs */}
       <div className="section flex gap-2 flex-wrap">
-        {["dashboard", "contributions", "expenses", "reports"].map((t) => (
+        {["dashboard", "contributions", "expenses", "reports", ...(isDev || isAdmin ? ["developer"] : [])].map((t) => (
           <button key={t} className={`tab ${tab === t ? "tab-active" : ""}`} onClick={() => setTab(t)}>
             {t[0].toUpperCase() + t.slice(1)}
           </button>
@@ -632,6 +862,18 @@ export default function Home() {
             <p className="subtle">No data yet.</p>
           )}
         </section>
+      )}
+
+      {/* Developer Portal */}
+      {tab === "developer" && (isDev || isAdmin) && (
+        <DeveloperPanel
+          addToast={addToast}
+          handleUnauthorized={handleUnauthorized}
+          materialEntries={materialEntries}
+          labourEntries={labourEntries}
+          reloadMaterial={fetchMaterialEntries}
+          reloadLabour={fetchLabourEntries}
+        />
       )}
 
       {/* Contributions */}
